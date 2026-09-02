@@ -31,12 +31,13 @@ import {
   listResidents,
   nextReadyDjTurn,
   occupancy,
+  sweepStaleHumanPresence,
   updateParticipant,
   updateQueue,
   updateTurn,
 } from "@/lib/server/repo";
 import { buildRoomState } from "@/lib/server/room-state";
-import { assignDjTurnClips, djClipPrompt, shouldAnnounceHouseTakeover } from "@/lib/shared/stage-cast";
+import { assignDjTurnClips, asCastFace, djClipPrompt, shouldAnnounceHouseTakeover, stageCastPool } from "@/lib/shared/stage-cast";
 import { pickNextResident, residentSetLabel } from "@/lib/shared/resident-booth";
 
 const chatBuckets = new Map<string, RateBucket>();
@@ -79,6 +80,7 @@ export class RoomEngine {
 
   private async tick() {
     try {
+      await this.sweepStaleHumans();
       await this.advancePlayback();
       await this.expireComposeWindows();
       await this.promoteComposer();
@@ -86,6 +88,11 @@ export class RoomEngine {
     } catch (err) {
       console.error("[engine] tick failed", err);
     }
+  }
+
+  private async sweepStaleHumans() {
+    const room = await getRoomBySlug();
+    await sweepStaleHumanPresence(room.id);
   }
 
   private async startHouse(roomId: string, previousKind: "house" | "dj" | null = null) {
@@ -295,8 +302,11 @@ export class RoomEngine {
     });
 
     const present = await listPresentReadyParticipants(room.id);
-    const others = present.filter((p) => p.id !== person.id && p.character_reference_url);
-    const casts = assignDjTurnClips(person, others);
+    const residents = (await listResidents()).filter((p) => p.status === "ready" && p.character_reference_url);
+    const presentHumans = present.filter((p) => !p.is_resident && p.character_reference_url);
+    const pool = stageCastPool(residents.map(asCastFace), presentHumans.map(asCastFace));
+    const others = pool.filter((p) => p.id !== person.id);
+    const casts = assignDjTurnClips(asCastFace(person), others);
 
     for (let i = 0; i < casts.length; i++) {
       const { role, person: featured } = casts[i];

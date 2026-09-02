@@ -339,7 +339,7 @@ export function RoomClient({
       <div className="room-body">
         <section className="panel people-panel">
           <div className="panel-heading">
-            <h2>People</h2>
+            <h2>Who's Here</h2>
             {inQueue ? (
               <button className="secondary people-action" type="button" onClick={() => emit("queue:leave")}>
                 Step off
@@ -364,7 +364,7 @@ export function RoomClient({
                 const decksLeft = onDecks ? boothLeft(p.booth?.endsAt) : null;
                 const cues = [
                   creating ? "creating" : null,
-                  onDecks ? "on decks" : null,
+                  onDecks ? "DJ" : null,
                   upNext ? "up next" : null,
                   p.isResident ? "Resident" : null,
                   p.muted ? "muted" : null,
@@ -389,7 +389,7 @@ export function RoomClient({
                       <span className="person-creating">Creating…</span>
                     ) : onDecks ? (
                       <span className="person-decks">
-                        decks{decksLeft ? ` · ${decksLeft}` : ""}
+                        DJ{decksLeft ? ` · ${decksLeft}` : ""}
                       </span>
                     ) : upNext ? (
                       <span className="person-upnext">up next</span>
@@ -404,7 +404,7 @@ export function RoomClient({
             </div>
           </div>
         </section>
-        <section className="panel">
+        <section className="panel chat-panel">
           <h2 className="panel-heading">
             Open chat
             <span className="chat-occupancy" title={`${state.occupancy} of ${state.maxOccupancy} in the room`}>

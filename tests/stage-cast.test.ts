@@ -3,9 +3,13 @@ import { houseClipPrompt } from "../lib/shared/house-prompt";
 import {
   assignDjTurnClips,
   assignHouseClip,
+  asCastFace,
   djClipPrompt,
   isDjBoothSlot,
+  isHumanPresenceStale,
+  latestHeartbeatMs,
   shouldAnnounceHouseTakeover,
+  stageCastPool,
   type CastFace,
 } from "../lib/shared/stage-cast";
 
@@ -106,6 +110,16 @@ describe("house clip casting", () => {
     expect(clip.person?.id).toBe("res-2");
   });
 
+  it("features other residents on the floor when they are in the live pool", () => {
+    const vinyl = { ...resident, id: "res-2", display_name: "Vinyl Ghost" };
+    const pool = stageCastPool([resident, vinyl], [dancerA]);
+    const floor = pool.filter((person) => person.id !== resident.id);
+    const clip = assignHouseClip(1, floor, [resident, vinyl], { boothHolder: resident });
+    expect(clip.role).toBe("dancer");
+    expect([dancerA.id, vinyl.id]).toContain(clip.person?.id);
+    expect(clip.person?.id).not.toBe(resident.id);
+  });
+
   it("falls back to anonymous booth or crowd when nobody has a face", () => {
     expect(assignHouseClip(0, [], []).role).toBe("dj");
     expect(assignHouseClip(0, [], []).person).toBeNull();
@@ -134,5 +148,36 @@ describe("house system chat", () => {
     expect(shouldAnnounceHouseTakeover("dj")).toBe(true);
     expect(shouldAnnounceHouseTakeover("house")).toBe(false);
     expect(shouldAnnounceHouseTakeover(null)).toBe(false);
+  });
+});
+
+describe("stage cast pool", () => {
+  it("is all residents plus present humans, never absent humans", () => {
+    const absent: CastFace = {
+      id: "gone",
+      display_name: "Left Already",
+      character_prompt: "ghosted",
+      character_reference_url: "media/gone.jpg",
+    };
+    const pool = stageCastPool([resident], [dancerA]);
+    expect(pool.map((p) => p.id).sort()).toEqual(["p-2", "res-1"]);
+    expect(pool.map((p) => p.id)).not.toContain(absent.id);
+    expect(asCastFace(resident).is_resident).toBe(true);
+  });
+});
+
+describe("human presence stale", () => {
+  it("is not stale before 3 minutes and is stale at 3 minutes", () => {
+    const now = Date.parse("2026-09-02T18:00:00.000Z");
+    expect(isHumanPresenceStale(now - 179_000, now)).toBe(false);
+    expect(isHumanPresenceStale(now - 180_000, now)).toBe(true);
+  });
+
+  it("uses the latest heartbeat when a participant has multiple sockets", () => {
+    const latest = latestHeartbeatMs([
+      { participant_id: "p-1", last_heartbeat_at: "2026-09-02T17:56:00.000Z" },
+      { participant_id: "p-1", last_heartbeat_at: "2026-09-02T17:59:00.000Z" },
+    ]);
+    expect(latest.get("p-1")).toBe(Date.parse("2026-09-02T17:59:00.000Z"));
   });
 });

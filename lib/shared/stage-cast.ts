@@ -1,4 +1,4 @@
-import { CLIP_COUNT } from "./constants";
+import { CLIP_COUNT, PRESENCE_STALE_MS } from "./constants";
 
 export type DjClipRole = "booth" | "floor" | "crowd";
 export type HouseClipRole = "dj" | "dancer" | "crowd";
@@ -10,6 +10,48 @@ export type CastFace = {
   character_reference_url?: string | null;
   is_resident?: boolean;
 };
+
+export function asCastFace(p: {
+  id: string;
+  display_name: string;
+  character_prompt: string;
+  character_reference_url?: string | null;
+  is_resident?: boolean;
+}): CastFace {
+  return {
+    id: p.id,
+    display_name: p.display_name,
+    character_prompt: p.character_prompt,
+    character_reference_url: p.character_reference_url,
+    is_resident: Boolean(p.is_resident),
+  };
+}
+
+/** New video jobs: every resident + humans currently present. Never absent humans. */
+export function stageCastPool(residents: CastFace[], presentHumans: CastFace[]): CastFace[] {
+  const byId = new Map<string, CastFace>();
+  for (const person of residents) byId.set(person.id, person);
+  for (const person of presentHumans) byId.set(person.id, person);
+  return [...byId.values()];
+}
+
+export function latestHeartbeatMs(
+  rows: { participant_id: string | null; last_heartbeat_at: string }[],
+): Map<string, number> {
+  const latest = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.participant_id) continue;
+    const at = Date.parse(row.last_heartbeat_at);
+    if (!Number.isFinite(at)) continue;
+    const prev = latest.get(row.participant_id) ?? 0;
+    if (at > prev) latest.set(row.participant_id, at);
+  }
+  return latest;
+}
+
+export function isHumanPresenceStale(lastHeartbeatMs: number, now = Date.now(), staleMs = PRESENCE_STALE_MS): boolean {
+  return lastHeartbeatMs <= now - staleMs;
+}
 
 export type DjClipCast = {
   role: DjClipRole;

@@ -45,7 +45,8 @@ export const FACE_MAX_BYTES = 4 * 1024 * 1024;
 
 export const CLOCK_TICK_MS = 1000;
 export const HEARTBEAT_MS = 15_000;
-export const PRESENCE_STALE_MS = 45_000;
+/** Human disconnect grace: stay in Who's Here / casting until this long without a heartbeat. Residents are never swept. */
+export const PRESENCE_STALE_MS = 180_000;
 
 export const QUEUES = {
   character: "bbr-character",
