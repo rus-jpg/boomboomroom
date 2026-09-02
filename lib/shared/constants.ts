@@ -32,6 +32,8 @@ export const HOUSE_VIDEO_PATHS = [
   "/house/house-05.mp4",
   "/house/house-06.mp4",
 ] as const;
+/** Looping wash behind Entrance / creating — reuse a house clip, never the live seeking stage. */
+export const ENTRANCE_LOOP_PATH = HOUSE_VIDEO_PATHS[0];
 
 export const CHAT_MAX_LEN = 240;
 export const CHAT_RATE_PER_MIN = 20;

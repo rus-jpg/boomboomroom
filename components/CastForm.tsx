@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CHARACTER_MAX, CHARACTER_MIN, NAME_MAX, NAME_MIN, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
+import { CHARACTER_MAX, CHARACTER_MIN, NAME_MAX, NAME_MIN, PRODUCT_NAME } from "@/lib/shared/constants";
 
 export function CastForm({ onCast }: { onCast?: () => void }) {
   const router = useRouter();
@@ -28,14 +28,8 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
     setError(null);
   }
 
-  function pingUnlock() {
-    if (typeof window === "undefined") return;
-    window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));
-  }
-
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    pingUnlock();
     setBusy(true);
     setError(null);
     const form = new FormData(e.currentTarget);
@@ -45,7 +39,7 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
     if (!res.ok) {
-      setError(json.error || "Casting failed.");
+      setError(json.error || "Couldn't enter.");
       return;
     }
     if (onCast) onCast();
@@ -56,32 +50,14 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
   }
 
   return (
-    <form className="cast-form" onSubmit={onSubmit} onPointerDown={pingUnlock}>
-      <h1 className="display" id="cast-title">
-        Cast
-      </h1>
-      <label>
-        Name
-        <input
-          name="displayName"
-          type="text"
-          required
-          minLength={NAME_MIN}
-          maxLength={NAME_MAX}
-          placeholder="Midnight Fox"
-          autoComplete="nickname"
-        />
-      </label>
-      <label>
-        Look
-        <textarea
-          name="characterPrompt"
-          required
-          minLength={CHARACTER_MIN}
-          maxLength={CHARACTER_MAX}
-          placeholder="Wet vinyl, gold teeth, Tokyo basement"
-        />
-      </label>
+    <form className="cast-form" onSubmit={onSubmit}>
+      <div className="cast-head">
+        <p className="cast-brand display">{PRODUCT_NAME}</p>
+        <h1 className="display" id="cast-title">
+          Entrance
+        </h1>
+        <p className="cast-pitch">A live AI music party — cast in, dance, take the booth.</p>
+      </div>
       <label className="cast-face-label">
         Face
         <div className={`cast-drop${preview ? " is-filled" : ""}${drag ? " is-drag" : ""}`}>
@@ -105,13 +81,35 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
           />
         </div>
       </label>
+      <label className="cast-name-label">
+        Name
+        <input
+          name="displayName"
+          type="text"
+          required
+          minLength={NAME_MIN}
+          maxLength={NAME_MAX}
+          placeholder="Midnight Fox"
+          autoComplete="nickname"
+        />
+      </label>
+      <label className="cast-look-label">
+        Look
+        <textarea
+          name="characterPrompt"
+          required
+          minLength={CHARACTER_MIN}
+          maxLength={CHARACTER_MAX}
+          placeholder="Wet vinyl, gold teeth, chrome visor"
+        />
+      </label>
       <label className="consent">
         <input name="consent" type="checkbox" required />
         <span>I consent. Face stays private — generated look only.</span>
       </label>
       {error ? <p className="error">{error}</p> : null}
       <button className="cta" type="submit" disabled={busy}>
-        {busy ? "Casting…" : "Enter"}
+        {busy ? "Entering…" : "Enter"}
       </button>
     </form>
   );

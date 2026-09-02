@@ -5,8 +5,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HOUSE_AUDIO_PATH, PRODUCT_NAME, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
+import { chatSendErrorCopy, mergeChat, reconcileOptimisticChat, type OptimisticChat } from "@/lib/shared/optimistic-chat";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { CastForm } from "./CastForm";
+import { GateBackdrop } from "./GateBackdrop";
 import { Stage } from "./Stage";
 
 function demoPortrait(hue: number): string {
@@ -150,8 +152,11 @@ export function RoomClient({
   const [now, setNow] = useState(initial.clock.serverNow);
   const socketRef = useRef<Socket | null>(null);
   const [sessionGone, setSessionGone] = useState(false);
+  const [optimisticChat, setOptimisticChat] = useState<OptimisticChat[]>([]);
+  const [chatError, setChatError] = useState<string | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const failTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -208,16 +213,29 @@ export function RoomClient({
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
   const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
+  const gateUp = guest || myStatus === "processing";
+  const chatLines = useMemo(() => mergeChat(state.chat, optimisticChat).slice(-40), [state.chat, optimisticChat]);
 
   useEffect(() => {
     if (session?.participantId) setSessionGone(false);
   }, [session?.participantId]);
 
+  useEffect(() => {
+    const timers = failTimersRef.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+    };
+  }, []);
+
+  useEffect(() => {
+    setOptimisticChat((list) => (list.length ? reconcileOptimisticChat(state.chat, list) : list));
+  }, [state.chat]);
+
   useLayoutEffect(() => {
     const el = chatLogRef.current;
     if (!el || !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [state.chat]);
+  }, [chatLines]);
 
   function emit(event: string, payload?: unknown) {
     const socket = socketRef.current;
@@ -227,6 +245,44 @@ export function RoomClient({
     }
     socket.emit(event, payload, (res?: { ok?: boolean; error?: string }) => {
       if (res && res.ok === false) setNotice(res.error ?? "failed");
+    });
+  }
+
+  function dropOptimistic(tempId: string) {
+    setOptimisticChat((list) => list.filter((m) => m.tempId !== tempId));
+  }
+
+  function failOptimistic(tempId: string, error?: string) {
+    setOptimisticChat((list) => list.map((m) => (m.tempId === tempId ? { ...m, status: "failed" as const } : m)));
+    setChatError(chatSendErrorCopy(error));
+    const t = window.setTimeout(() => dropOptimistic(tempId), 1800);
+    failTimersRef.current.push(t);
+  }
+
+  function sendChat(body: string) {
+    const tempId = `opt-${crypto.randomUUID()}`;
+    const row: OptimisticChat = {
+      id: tempId,
+      tempId,
+      participantId: liveSession?.participantId ?? null,
+      displayName: liveSession?.displayName ?? "You",
+      body,
+      kind: "chat",
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    stickToBottomRef.current = true;
+    setChat("");
+    setChatError(null);
+    setOptimisticChat((list) => [...list, row]);
+
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) {
+      failOptimistic(tempId);
+      return;
+    }
+    socket.emit("chat:send", body, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) failOptimistic(tempId, res.error);
     });
   }
 
@@ -254,8 +310,8 @@ export function RoomClient({
 
   return (
     <>
-      <div className="room-shell" inert={guest || undefined}>
-      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
+      <div className={`room-shell${gateUp ? " is-gate" : ""}`} inert={guest || undefined}>
+      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} dormant={gateUp} />
       <div className="stage-bottom-fade" aria-hidden />
       <header className="room-header">
         <strong className="display">{PRODUCT_NAME}</strong>
@@ -355,8 +411,11 @@ export function RoomClient({
               stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
             }}
           >
-            {state.chat.slice(-40).map((m) => (
-              <div className={`chat-line${m.kind === "system" ? " is-system" : ""}`} key={m.id}>
+            {chatLines.map((m) => (
+              <div
+                className={`chat-line${m.kind === "system" ? " is-system" : ""}${m.pending ? " is-pending" : ""}${m.failed ? " is-failed" : ""}`}
+                key={m.id}
+              >
                 {m.kind === "system" ? <span className="chat-sys-label">Room</span> : <strong>{m.displayName}</strong>}
                 <span>{m.body}</span>
               </div>
@@ -368,22 +427,22 @@ export function RoomClient({
               e.preventDefault();
               const body = chat.trim();
               if (!body) return;
-              setChat("");
-              void emit("chat:send", body);
+              sendChat(body);
             }}
           >
             <input value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
             <button type="submit">Send</button>
           </form>
+          {chatError ? <p className="chat-error">{chatError}</p> : null}
         </section>
       </div>
 
       {myStatus === "processing" ? (
         <div className="processing">
-          <div>
-            <p className="eyebrow">Casting</p>
-            <h2 className="display">Summoning your look</h2>
-            <p>The booth is open. Your character drops when generation finishes.</p>
+          <GateBackdrop />
+          <div className="processing-copy">
+            <h2 className="display">Creating your character</h2>
+            <p>You'll be let in shortly.</p>
           </div>
         </div>
       ) : null}
@@ -439,6 +498,7 @@ export function RoomClient({
       </div>
       {guest ? (
         <div className="cast-modal" role="dialog" aria-modal="true" aria-labelledby="cast-title">
+          <GateBackdrop />
           <CastForm
             onCast={() => {
               window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));
