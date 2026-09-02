@@ -63,28 +63,29 @@ export function djClipPrompt(input: {
 
 /**
  * House livestream: most clips are dancers (ready people on the floor).
- * At most 1 of 6 is a resident in the booth — never a random human as DJ.
+ * Booth clips use the current resident holder when known — never a random human as DJ.
  */
 export function assignHouseClip(
   seq: number,
   dancers: CastFace[],
   residents: CastFace[],
-  clipCount = CLIP_COUNT,
+  opts?: { boothHolder?: CastFace | null; clipCount?: number },
 ): HouseClipCast {
+  const clipCount = opts?.clipCount ?? CLIP_COUNT;
   const slot = Math.abs(seq) % clipCount;
   const boothSlot = slot === 0;
   if (boothSlot) {
-    if (residents.length) {
-      const person = residents[Math.abs(Math.floor(seq / clipCount)) % residents.length];
-      return { role: "dj", person };
-    }
+    const holder = opts?.boothHolder ?? (residents.length ? residents[Math.abs(Math.floor(seq / clipCount)) % residents.length] : null);
+    if (holder) return { role: "dj", person: holder };
     return { role: "dj", person: null };
   }
   if (dancers.length) {
     return { role: "dancer", person: dancers[Math.abs(seq) % dancers.length] };
   }
-  if (residents.length) {
-    return { role: "dancer", person: residents[Math.abs(seq) % residents.length] };
+  const floorResidents = residents.filter((person) => person.id !== opts?.boothHolder?.id);
+  const floorPool = floorResidents.length ? floorResidents : residents;
+  if (floorPool.length) {
+    return { role: "dancer", person: floorPool[Math.abs(seq) % floorPool.length] };
   }
   return { role: "crowd", person: null };
 }

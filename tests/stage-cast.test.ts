@@ -99,6 +99,13 @@ describe("house clip casting", () => {
     expect(dancer.person?.id).toBe(dancerA.id);
   });
 
+  it("pins house booth clips to the current resident holder", () => {
+    const other = { ...resident, id: "res-2", display_name: "Vinyl Ghost" };
+    const clip = assignHouseClip(0, [dancerA], [resident, other], { boothHolder: other });
+    expect(clip.role).toBe("dj");
+    expect(clip.person?.id).toBe("res-2");
+  });
+
   it("falls back to anonymous booth or crowd when nobody has a face", () => {
     expect(assignHouseClip(0, [], []).role).toBe("dj");
     expect(assignHouseClip(0, [], []).person).toBeNull();

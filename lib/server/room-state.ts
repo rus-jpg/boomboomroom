@@ -17,6 +17,7 @@ import {
   listJobsForTurn,
   nextReadyDjTurn,
 } from "./repo";
+import { mergeBoothQueue } from "@/lib/shared/resident-booth";
 import { signedUrl } from "./storage";
 
 async function resolveUrl(value: string | null | undefined): Promise<string | null> {
@@ -147,15 +148,15 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     const residents = await listResidents();
     for (const r of residents) {
       if (uniquePresence.has(r.id)) continue;
-      participants.push(await toPublic(r, false));
+      participants.push(await toPublic(r, r.id === djId));
     }
   }
 
-  const queueView: QueueEntryView[] = [];
+  const humanQueue: QueueEntryView[] = [];
   let position = 1;
   for (const q of queue) {
     const p = byId.get(q.participant_id);
-    queueView.push({
+    humanQueue.push({
       id: q.id,
       participantId: q.participant_id,
       displayName: p?.display_name ?? "Guest",
@@ -163,17 +164,19 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
       status: q.status,
       createdAt: q.created_at,
       position: position++,
+      isResident: Boolean(p?.is_resident),
+      endsAt: null,
     });
   }
 
-  const chatView: ChatMessageView[] = chat.map((c) => ({
-    id: c.id,
-    participantId: c.participant_id,
-    displayName: c.kind === "system" ? "Room" : (byId.get(c.participant_id ?? "")?.display_name ?? "Guest"),
-    body: c.body,
-    kind: c.kind,
-    createdAt: c.created_at,
-  }));
+  const residents = await listResidents();
+  const residentFaces = await Promise.all(
+    residents.map(async (r) => ({
+      id: r.id,
+      displayName: r.display_name,
+      characterUrl: await resolveUrl(r.character_reference_url),
+    })),
+  );
 
   const currentTurn = (await toTurnView(playing)) ?? {
     id: "house-live",
@@ -186,6 +189,23 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     endsAt: new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString(),
     dj: null,
   };
+
+  const queueView = mergeBoothQueue({
+    humans: humanQueue,
+    residents: residentFaces,
+    playingKind: currentTurn.kind,
+    playingDjId: currentTurn.dj?.id ?? playing?.dj_participant_id ?? null,
+    playingEndsAt: currentTurn.endsAt,
+  });
+
+  const chatView: ChatMessageView[] = chat.map((c) => ({
+    id: c.id,
+    participantId: c.participant_id,
+    displayName: c.kind === "system" ? "Room" : (byId.get(c.participant_id ?? "")?.display_name ?? "Guest"),
+    body: c.body,
+    kind: c.kind,
+    createdAt: c.created_at,
+  }));
 
   const startMs = currentTurn.startsAt ? new Date(currentTurn.startsAt).getTime() : Date.now();
   const composing = queue.find((q) => q.status === "preparing");

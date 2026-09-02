@@ -135,7 +135,7 @@ export async function listResidents(): Promise<Participant[]> {
     const { data } = await supabaseAdmin().from("participants").select("*").eq("is_resident", true).order("joined_at", { ascending: true });
     return data ?? [];
   }
-  return readStore().participants.filter((p) => p.is_resident);
+  return readStore().participants.filter((p) => p.is_resident).sort((a, b) => a.joined_at.localeCompare(b.joined_at));
 }
 
 export async function hasInflightCharacterJob(participantId: string): Promise<boolean> {
@@ -529,6 +529,26 @@ export async function latestPlayingTurn(roomId: string): Promise<Turn | null> {
     readStore()
       .turns.filter((t) => t.room_id === roomId && t.generation_status === "playing")
       .sort((a, b) => (b.starts_at ?? "").localeCompare(a.starts_at ?? ""))[0] ?? null
+  );
+}
+
+/** Most recent house turn (any status) — rotation cursor lives on dj_participant_id. */
+export async function latestHouseTurn(roomId: string): Promise<Turn | null> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("turns")
+      .select("*")
+      .eq("room_id", roomId)
+      .eq("kind", "house")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return data;
+  }
+  return (
+    readStore()
+      .turns.filter((t) => t.room_id === roomId && t.kind === "house")
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
   );
 }
 

@@ -3,7 +3,7 @@ import {
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
-import { ensureHouseJobsQueued, houseSetLabel, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
+import { ensureHouseJobsQueued, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { composeDeadlineMs, isComposeWindowExpired } from "@/lib/shared/compose";
 import { shouldAdvancePlayback } from "@/lib/shared/playback";
@@ -22,11 +22,13 @@ import {
   insertModeration,
   insertSystemChat,
   insertTurn,
+  latestHouseTurn,
   latestPlayingTurn,
   leaveQueue,
   leaveRoomSession,
   listPresentReadyParticipants,
   listQueue,
+  listResidents,
   nextReadyDjTurn,
   occupancy,
   updateParticipant,
@@ -35,6 +37,7 @@ import {
 } from "@/lib/server/repo";
 import { buildRoomState } from "@/lib/server/room-state";
 import { assignDjTurnClips, djClipPrompt, shouldAnnounceHouseTakeover } from "@/lib/shared/stage-cast";
+import { pickNextResident, residentSetLabel } from "@/lib/shared/resident-booth";
 
 const chatBuckets = new Map<string, RateBucket>();
 
@@ -91,12 +94,14 @@ export class RoomEngine {
     } catch (err) {
       console.warn("[engine] house buffer enqueue", err);
     }
+    const holder = await this.nextResidentHolder(roomId);
     const bounds = turnBounds(Date.now());
     const turn = await insertTurn({
       roomId,
       kind: "house",
+      djParticipantId: holder?.id ?? null,
       generationStatus: "playing",
-      musicPrompt: await houseSetLabel(),
+      musicPrompt: residentSetLabel(holder?.display_name),
       audioUrl: HOUSE_AUDIO_PATH,
       videoSegmentUrls: [],
       startsAt: bounds.startsAt,
@@ -117,8 +122,30 @@ export class RoomEngine {
       console.warn("[engine] house buffer refill", err);
     }
     if (shouldAnnounceHouseTakeover(previousKind)) {
-      await insertSystemChat({ roomId, body: "House takes the booth." });
+      await insertSystemChat({
+        roomId,
+        body: holder ? `${holder.display_name} takes the booth.` : "House takes the booth.",
+      });
     }
+  }
+
+  private async nextResidentHolder(roomId: string) {
+    const residents = (await listResidents()).filter((p) => p.status === "ready" || p.character_reference_url);
+    const ordered = residents.length ? residents : await listResidents();
+    const last = await latestHouseTurn(roomId);
+    return pickNextResident(ordered, last?.dj_participant_id ?? null);
+  }
+
+  /** Legacy house turns without a resident pick up the rotation without skipping ahead every tick. */
+  private async attachResidentBooth(turn: { id: string; kind: string; dj_participant_id: string | null }) {
+    if (turn.kind !== "house" || turn.dj_participant_id) return;
+    const residents = await listResidents();
+    const holder = pickNextResident(residents, null);
+    if (!holder) return;
+    await updateTurn(turn.id, {
+      dj_participant_id: holder.id,
+      music_prompt: residentSetLabel(holder.display_name),
+    });
   }
 
   /** Postgres-authoritative: complete the current turn when it expires, or cut house for a ready DJ. */
@@ -140,6 +167,9 @@ export class RoomEngine {
     if (!playing) {
       await this.startHouse(room.id);
       return;
+    }
+    if (playing.kind === "house" && !playing.dj_participant_id) {
+      await this.attachResidentBooth(playing);
     }
     const ready = await nextReadyDjTurn(room.id);
     const now = Date.now();

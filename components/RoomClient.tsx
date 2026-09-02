@@ -28,8 +28,8 @@ function demoState(name: string): RoomState {
   const start = Math.floor(Date.now() / 60_000) * 60_000;
   const crew = [
     { id: "me", displayName: name, hue: 332, isDj: false, isResident: false, muted: false },
-    { id: "res-1", displayName: "House Cat", hue: 188, isDj: false, isResident: true, muted: false },
-    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: true, isResident: false, muted: false },
+    { id: "res-1", displayName: "House Cat", hue: 188, isDj: true, isResident: true, muted: false },
+    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: false, isResident: false, muted: false },
     { id: "p-3", displayName: "Neon Fox", hue: 312, isDj: false, isResident: false, muted: false },
     { id: "p-4", displayName: "Basement", hue: 262, isDj: false, isResident: false, muted: true },
     { id: "p-5", displayName: "Acid Mira", hue: 148, isDj: false, isResident: false, muted: false },
@@ -53,7 +53,41 @@ function demoState(name: string): RoomState {
       isDj: p.isDj,
       isResident: p.isResident,
     })),
-    queue: [],
+    queue: [
+      {
+        id: "rq-1",
+        participantId: "res-1",
+        displayName: "House Cat",
+        characterUrl: demoPortrait(188),
+        status: "playing" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 1,
+        isResident: true,
+        endsAt: new Date(start + 60_000).toISOString(),
+      },
+      {
+        id: "rq-2",
+        participantId: "res-2",
+        displayName: "Neon Mira",
+        characterUrl: demoPortrait(312),
+        status: "waiting" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 2,
+        isResident: true,
+        endsAt: null,
+      },
+      {
+        id: "rq-3",
+        participantId: "res-3",
+        displayName: "Basement Kev",
+        characterUrl: demoPortrait(38),
+        status: "waiting" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 3,
+        isResident: true,
+        endsAt: null,
+      },
+    ],
     chat: [
       {
         id: "sys-old",
@@ -83,7 +117,7 @@ function demoState(name: string): RoomState {
         id: "sys",
         participantId: null,
         displayName: "Room",
-        body: "Velvet takes the booth.",
+        body: "House Cat takes the booth.",
         kind: "system",
         createdAt: new Date().toISOString(),
       },
@@ -92,7 +126,7 @@ function demoState(name: string): RoomState {
       id: "house-demo",
       kind: "house",
       generationStatus: "playing",
-      musicPrompt: "House buffer",
+      musicPrompt: "Resident set · House Cat",
       audioUrl: HOUSE_AUDIO_PATH,
       videoSegments: Array.from({ length: 6 }, () => ({ url: "", participantId: null, displayName: null })),
       startsAt: new Date(start).toISOString(),
@@ -204,6 +238,12 @@ export function RoomClient({
     });
   }
 
+  function boothLeft(endsAt: string | null | undefined): string | null {
+    if (!endsAt) return null;
+    const s = Math.max(0, Math.ceil((new Date(endsAt).getTime() - now) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
   async function exitRoom() {
     const socket = socketRef.current;
     if (socket?.connected) {
@@ -244,15 +284,23 @@ export function RoomClient({
           <h2>Booth queue</h2>
           <div className="panel-scroll">
             {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
-            {state.queue.map((q) => (
-              <div className="queue-item" key={q.id}>
-                <span>{String(q.position).padStart(2, "0")}</span>
-                <div>
-                  <strong>{q.displayName}</strong>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{q.status}</div>
+            {state.queue.map((q) => {
+              const left = boothLeft(q.endsAt);
+              return (
+                <div className={`queue-item${q.isResident ? " is-resident" : ""}`} key={q.id}>
+                  <span>{String(q.position).padStart(2, "0")}</span>
+                  <div className="queue-copy">
+                    <strong>{q.displayName}</strong>
+                    <div className="queue-meta">
+                      {q.isResident ? "Resident" : null}
+                      {q.isResident ? " · " : null}
+                      {q.status}
+                    </div>
+                  </div>
+                  {left ? <span className="queue-timer">{left}</span> : null}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {inQueue ? (
             <button className="secondary" type="button" onClick={() => emit("queue:leave")}>

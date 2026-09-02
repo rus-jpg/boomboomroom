@@ -11,15 +11,18 @@ import {
   countUnusedHouseClips,
   getRoomBySlug,
   insertJob,
+  latestHouseTurn,
   latestPlayingTurn,
   listInflightHouseMusicJobs,
   listInflightHouseVideoJobs,
   listMediaByKind,
   listPresentReadyParticipants,
   listResidents,
+  getParticipant,
   listUnusedHouseClips,
   updateTurn,
 } from "./repo";
+import { pickNextResident } from "@/lib/shared/resident-booth";
 
 const AHEAD_UNUSED = CLIP_COUNT;
 const TARGET_POOL = 12;
@@ -114,12 +117,18 @@ async function ensureHouseVideoJobsQueued(): Promise<number> {
   if (need <= 0) return 0;
 
   const { dancers, residents } = await houseCastRoster();
+  const room = await getRoomBySlug();
+  const [playing, lastHouse] = await Promise.all([latestPlayingTurn(room.id), latestHouseTurn(room.id)]);
+  const currentId = playing?.kind === "house" ? playing.dj_participant_id : lastHouse?.dj_participant_id ?? null;
+  const boothHolder =
+    (currentId ? residents.find((person) => person.id === currentId) : null) ??
+    pickNextResident(residents, lastHouse?.dj_participant_id ?? null);
   const batchId = randomUUID();
   const seqBase = Date.now();
 
   for (let i = 0; i < need; i++) {
     const seq = seqBase + i;
-    const { role, person: featured } = assignHouseClip(seq, dancers, residents);
+    const { role, person: featured } = assignHouseClip(seq, dancers, residents, { boothHolder });
     const job = await insertJob({
       kind: "video",
       turnId: null,
@@ -190,11 +199,17 @@ export async function ensureHouseJobsQueued(): Promise<number> {
   return videos + beds;
 }
 
-export async function houseSetLabel(): Promise<string> {
+export async function houseSetLabel(residentName?: string | null): Promise<string> {
+  if (residentName) return `Resident set · ${residentName}`;
+  const room = await getRoomBySlug();
+  const playing = await latestPlayingTurn(room.id);
+  if (playing?.kind === "house" && playing.dj_participant_id) {
+    const holder = await getParticipant(playing.dj_participant_id);
+    if (holder?.display_name) return `Resident set · ${holder.display_name}`;
+  }
   const residents = (await listResidents()).filter((p) => p.status === "ready");
   if (!residents.length) return "House buffer — midnight basement disco";
-  const names = residents.slice(0, 3).map((p) => p.display_name).join(", ");
-  return `Resident set · ${names}`;
+  return `Resident set · ${residents[0].display_name}`;
 }
 
 /** Attach H3 Max clips + Music 3 beds to a playing house turn that is empty or still on stubs. */
