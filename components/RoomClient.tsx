@@ -5,8 +5,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HOUSE_AUDIO_PATH, PRODUCT_NAME, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
+import { chatSendErrorCopy, mergeChat, reconcileOptimisticChat, type OptimisticChat } from "@/lib/shared/optimistic-chat";
+import { orderPeopleGrid } from "@/lib/shared/people-grid";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { CastForm } from "./CastForm";
+import { GateBackdrop } from "./GateBackdrop";
 import { Stage } from "./Stage";
 
 function demoPortrait(hue: number): string {
@@ -29,8 +32,10 @@ function demoState(name: string): RoomState {
   const crew = [
     { id: "me", displayName: name, hue: 332, isDj: false, isResident: false, muted: false },
     { id: "res-1", displayName: "House Cat", hue: 188, isDj: true, isResident: true, muted: false },
-    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: false, isResident: false, muted: false },
-    { id: "p-3", displayName: "Neon Fox", hue: 312, isDj: false, isResident: false, muted: false },
+    { id: "res-2", displayName: "Neon Mira", hue: 312, isDj: false, isResident: true, muted: false },
+    { id: "res-3", displayName: "Basement Kev", hue: 38, isDj: false, isResident: true, muted: false },
+    { id: "dj-1", displayName: "Velvet", hue: 20, isDj: false, isResident: false, muted: false },
+    { id: "p-3", displayName: "Neon Fox", hue: 300, isDj: false, isResident: false, muted: false },
     { id: "p-4", displayName: "Basement", hue: 262, isDj: false, isResident: false, muted: true },
     { id: "p-5", displayName: "Acid Mira", hue: 148, isDj: false, isResident: false, muted: false },
     { id: "p-6", displayName: "Chrome", hue: 200, isDj: false, isResident: false, muted: false },
@@ -47,8 +52,8 @@ function demoState(name: string): RoomState {
       id: p.id,
       displayName: p.displayName,
       characterPrompt: "demo",
-      characterUrl: demoPortrait(p.hue),
-      status: "ready" as const,
+      characterUrl: p.id === "p-7" ? null : demoPortrait(p.hue),
+      status: p.id === "p-7" ? ("processing" as const) : ("ready" as const),
       muted: p.muted,
       isDj: p.isDj,
       isResident: p.isResident,
@@ -131,6 +136,13 @@ function demoState(name: string): RoomState {
   };
 }
 
+function nowPlayingLabel(turn: RoomState["currentTurn"]): string {
+  if (turn?.kind === "dj" && turn.dj) {
+    return `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`;
+  }
+  return turn?.musicPrompt ?? "House buffer · midnight basement disco";
+}
+
 export function RoomClient({
   initial,
   session,
@@ -142,7 +154,6 @@ export function RoomClient({
 }) {
   const router = useRouter();
   const [state, setState] = useState(initial);
-  const [socketReady, setSocketReady] = useState(false);
   const [chat, setChat] = useState("");
   const [prompt, setPrompt] = useState("");
   const [lyrics, setLyrics] = useState("");
@@ -150,8 +161,11 @@ export function RoomClient({
   const [now, setNow] = useState(initial.clock.serverNow);
   const socketRef = useRef<Socket | null>(null);
   const [sessionGone, setSessionGone] = useState(false);
+  const [optimisticChat, setOptimisticChat] = useState<OptimisticChat[]>([]);
+  const [chatError, setChatError] = useState<string | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const failTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -178,7 +192,6 @@ export function RoomClient({
         auth: { ticket: ticketRes.ticket },
       });
       socketRef.current = socket;
-      socket.on("connect", () => setSocketReady(true));
       socket.on("connect_error", () => {
         setNotice("Realtime offline — house demo is holding.");
         setState((s) => ({ ...s, mockMode: true }));
@@ -208,16 +221,33 @@ export function RoomClient({
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
   const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
+  const gateUp = guest;
+  const people = useMemo(
+    () => orderPeopleGrid(state.participants, state.queue, state.currentTurn?.endsAt),
+    [state.participants, state.queue, state.currentTurn?.endsAt],
+  );
+  const chatLines = useMemo(() => mergeChat(state.chat, optimisticChat).slice(-40), [state.chat, optimisticChat]);
 
   useEffect(() => {
     if (session?.participantId) setSessionGone(false);
   }, [session?.participantId]);
 
+  useEffect(() => {
+    const timers = failTimersRef.current;
+    return () => {
+      for (const t of timers) window.clearTimeout(t);
+    };
+  }, []);
+
+  useEffect(() => {
+    setOptimisticChat((list) => (list.length ? reconcileOptimisticChat(state.chat, list) : list));
+  }, [state.chat]);
+
   useLayoutEffect(() => {
     const el = chatLogRef.current;
     if (!el || !stickToBottomRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [state.chat]);
+  }, [chatLines]);
 
   function emit(event: string, payload?: unknown) {
     const socket = socketRef.current;
@@ -227,6 +257,44 @@ export function RoomClient({
     }
     socket.emit(event, payload, (res?: { ok?: boolean; error?: string }) => {
       if (res && res.ok === false) setNotice(res.error ?? "failed");
+    });
+  }
+
+  function dropOptimistic(tempId: string) {
+    setOptimisticChat((list) => list.filter((m) => m.tempId !== tempId));
+  }
+
+  function failOptimistic(tempId: string, error?: string) {
+    setOptimisticChat((list) => list.map((m) => (m.tempId === tempId ? { ...m, status: "failed" as const } : m)));
+    setChatError(chatSendErrorCopy(error));
+    const t = window.setTimeout(() => dropOptimistic(tempId), 1800);
+    failTimersRef.current.push(t);
+  }
+
+  function sendChat(body: string) {
+    const tempId = `opt-${crypto.randomUUID()}`;
+    const row: OptimisticChat = {
+      id: tempId,
+      tempId,
+      participantId: liveSession?.participantId ?? null,
+      displayName: liveSession?.displayName ?? "You",
+      body,
+      kind: "chat",
+      createdAt: new Date().toISOString(),
+      status: "pending",
+    };
+    stickToBottomRef.current = true;
+    setChat("");
+    setChatError(null);
+    setOptimisticChat((list) => [...list, row]);
+
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) {
+      failOptimistic(tempId);
+      return;
+    }
+    socket.emit("chat:send", body, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) failOptimistic(tempId, res.error);
     });
   }
 
@@ -254,70 +322,56 @@ export function RoomClient({
 
   return (
     <>
-      <div className="room-shell" inert={guest || undefined}>
-      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
+      <div className={`room-shell${gateUp ? " is-gate" : ""}`} inert={guest || undefined}>
+      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} dormant={gateUp} />
       <div className="stage-bottom-fade" aria-hidden />
       <header className="room-header">
-        <strong className="display">{PRODUCT_NAME}</strong>
+        <div className="room-brand">
+          <strong className="display">{PRODUCT_NAME}</strong>
+          <p className="room-set display">{nowPlayingLabel(state.currentTurn)}</p>
+        </div>
         <div className="room-header-actions">
-          <span className="pill">
-            {state.occupancy}/{state.maxOccupancy}
-            {state.mockMode ? " · mock gen" : ""}
-            {!socketReady ? " · house clock" : ""}
-          </span>
-          {!guest ? (
-            <button className="exit-room" type="button" onClick={() => void exitRoom()}>
-              Exit room
-            </button>
-          ) : null}
+          <button className="exit-sign" type="button" onClick={() => void exitRoom()} aria-label="Exit room">
+            EXIT
+          </button>
         </div>
       </header>
       <div className="room-body">
-        <section className="panel">
-          <h2>Booth queue</h2>
-          <div className="panel-scroll">
-            {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
-            {state.queue.map((q) => {
-              const left = boothLeft(q.endsAt);
-              return (
-                <div className={`queue-item${q.isResident ? " is-resident" : ""}`} key={q.id}>
-                  <span>{String(q.position).padStart(2, "0")}</span>
-                  <div className="queue-copy">
-                    <strong>{q.displayName}</strong>
-                    <div className="queue-meta">
-                      {q.isResident ? "Resident" : null}
-                      {q.isResident ? " · " : null}
-                      {q.status}
-                    </div>
-                  </div>
-                  {left ? <span className="queue-timer">{left}</span> : null}
-                </div>
-              );
-            })}
+        <section className="panel people-panel">
+          <div className="panel-heading">
+            <h2>People</h2>
+            {inQueue ? (
+              <button className="secondary people-action" type="button" onClick={() => emit("queue:leave")}>
+                Step off
+              </button>
+            ) : (
+              <button
+                className="people-action"
+                type="button"
+                onClick={() => emit("queue:join")}
+                disabled={myStatus !== "ready"}
+              >
+                Get on the decks
+              </button>
+            )}
           </div>
-          {inQueue ? (
-            <button className="secondary" type="button" onClick={() => emit("queue:leave")}>
-              Step off
-            </button>
-          ) : (
-            <button type="button" onClick={() => emit("queue:join")} disabled={myStatus !== "ready"}>
-              Get on the decks
-            </button>
-          )}
-        </section>
-        <section className="panel">
-          <h2>In the room</h2>
           <div className="panel-scroll">
             <div className="people-grid">
-              {state.participants.map((p) => {
+              {people.map((p) => {
+                const creating = p.status === "processing";
+                const onDecks = p.booth?.role === "decks";
+                const upNext = p.booth?.role === "up-next";
+                const decksLeft = onDecks ? boothLeft(p.booth?.endsAt) : null;
                 const cues = [
+                  creating ? "creating" : null,
+                  onDecks ? "on decks" : null,
+                  upNext ? "up next" : null,
                   p.isResident ? "Resident" : null,
-                  p.isDj ? "booth" : null,
                   p.muted ? "muted" : null,
                 ].filter(Boolean);
                 return (
                   <article
-                    className={`person-tile${p.isDj ? " is-dj" : ""}${p.muted ? " is-muted" : ""}`}
+                    className={`person-tile${onDecks ? " is-dj" : ""}${p.muted ? " is-muted" : ""}${creating ? " is-creating" : ""}`}
                     key={p.id}
                     title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
                   >
@@ -328,15 +382,21 @@ export function RoomClient({
                       ) : (
                         <div className="avatar" aria-hidden />
                       )}
+                      {creating ? <span className="person-spinner" aria-hidden /> : null}
                     </div>
                     <strong className="person-name">{p.displayName}</strong>
-                    {p.isResident ? <span className="person-resident">Resident</span> : null}
-                    {p.isDj || p.muted ? (
-                      <span className="person-meta">
-                        {p.isDj ? "booth" : null}
-                        {p.isDj && p.muted ? " · " : null}
-                        {p.muted ? "muted" : null}
+                    {creating ? (
+                      <span className="person-creating">Creating…</span>
+                    ) : onDecks ? (
+                      <span className="person-decks">
+                        decks{decksLeft ? ` · ${decksLeft}` : ""}
                       </span>
+                    ) : upNext ? (
+                      <span className="person-upnext">up next</span>
+                    ) : p.isResident ? (
+                      <span className="person-resident">Resident</span>
+                    ) : p.muted ? (
+                      <span className="person-meta">muted</span>
                     ) : null}
                   </article>
                 );
@@ -345,7 +405,18 @@ export function RoomClient({
           </div>
         </section>
         <section className="panel">
-          <h2>Open chat</h2>
+          <h2 className="panel-heading">
+            Open chat
+            <span className="chat-occupancy" title={`${state.occupancy} of ${state.maxOccupancy} in the room`}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.4 0-8 2.1-8 4.7V21h16v-2.3c0-2.6-3.6-4.7-8-4.7Z"
+                />
+              </svg>
+              {state.occupancy}/{state.maxOccupancy}
+            </span>
+          </h2>
           <div
             className="chat-log"
             ref={chatLogRef}
@@ -355,8 +426,11 @@ export function RoomClient({
               stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
             }}
           >
-            {state.chat.slice(-40).map((m) => (
-              <div className={`chat-line${m.kind === "system" ? " is-system" : ""}`} key={m.id}>
+            {chatLines.map((m) => (
+              <div
+                className={`chat-line${m.kind === "system" ? " is-system" : ""}${m.pending ? " is-pending" : ""}${m.failed ? " is-failed" : ""}`}
+                key={m.id}
+              >
                 {m.kind === "system" ? <span className="chat-sys-label">Room</span> : <strong>{m.displayName}</strong>}
                 <span>{m.body}</span>
               </div>
@@ -368,25 +442,15 @@ export function RoomClient({
               e.preventDefault();
               const body = chat.trim();
               if (!body) return;
-              setChat("");
-              void emit("chat:send", body);
+              sendChat(body);
             }}
           >
             <input value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
             <button type="submit">Send</button>
           </form>
+          {chatError ? <p className="chat-error">{chatError}</p> : null}
         </section>
       </div>
-
-      {myStatus === "processing" ? (
-        <div className="processing">
-          <div>
-            <p className="eyebrow">Casting</p>
-            <h2 className="display">Summoning your look</h2>
-            <p>The booth is open. Your character drops when generation finishes.</p>
-          </div>
-        </div>
-      ) : null}
 
       {myCompose ? (
         <div className="booth">
@@ -439,6 +503,7 @@ export function RoomClient({
       </div>
       {guest ? (
         <div className="cast-modal" role="dialog" aria-modal="true" aria-labelledby="cast-title">
+          <GateBackdrop />
           <CastForm
             onCast={() => {
               window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));

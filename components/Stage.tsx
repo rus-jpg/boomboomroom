@@ -20,10 +20,13 @@ export function Stage({
   turn,
   clock,
   allowEnterOverlay = true,
+  dormant = false,
 }: {
   turn: TurnView | null;
   clock: ClockSnapshot;
   allowEnterOverlay?: boolean;
+  /** Pause live seeking so Entrance can sit on a static loop instead. */
+  dormant?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const v0Ref = useRef<HTMLVideoElement>(null);
@@ -46,6 +49,8 @@ export function Stage({
   const tryStartAudioRef = useRef<() => Promise<boolean>>(async () => false);
   const audioGateRef = useRef(audioGate);
   audioGateRef.current = audioGate;
+  const dormantRef = useRef(dormant);
+  dormantRef.current = dormant;
 
   clockRef.current = clock;
   frontIs0Ref.current = frontIs0;
@@ -67,6 +72,7 @@ export function Stage({
   }
 
   tryStartAudioRef.current = async () => {
+    if (dormantRef.current) return false;
     const audio = audioRef.current;
     if (!audio) return false;
     try {
@@ -117,11 +123,20 @@ export function Stage({
       lastAudioUrl.current = audioUrl;
       audio.src = audioUrl;
     }
-    void tryStartAudioRef.current();
-  }, [audioUrl]);
+    if (!dormant) void tryStartAudioRef.current();
+    else audio.pause();
+  }, [audioUrl, dormant]);
 
   useEffect(() => {
-    if (stubCurrent) return;
+    if (dormant) {
+      v0Ref.current?.pause();
+      v1Ref.current?.pause();
+      audioRef.current?.pause();
+    }
+  }, [dormant]);
+
+  useEffect(() => {
+    if (dormant || stubCurrent) return;
     const v0 = v0Ref.current;
     const v1 = v1Ref.current;
     if (!v0 || !v1 || !currentUrl) return;
@@ -183,12 +198,16 @@ export function Stage({
     preloadBack(back);
     primedTurnRef.current = turnId;
     primedIndexRef.current = clipIndex;
-  }, [currentUrl, nextUrl, clipIndex, stubCurrent, turn?.id]);
+  }, [currentUrl, nextUrl, clipIndex, stubCurrent, turn?.id, dormant]);
 
   useEffect(() => {
     const startsAt = turn?.startsAt ? new Date(turn.startsAt).getTime() : Date.now();
     let raf = 0;
     const loop = () => {
+      if (dormantRef.current) {
+        raf = requestAnimationFrame(loop);
+        return;
+      }
       const { currentUrl: liveUrl, nextUrl: liveNext } = urlsRef.current;
       const local = clockFromStart(startsAt, Date.now());
       const canFade =
@@ -270,7 +289,7 @@ export function Stage({
         style={{ opacity: op1 }}
       />
       <div className="stage-fallback" aria-hidden />
-      {warming ? (
+      {warming && !dormant ? (
         <div className="stage-warming" role="status">
           warming livestream
         </div>
@@ -286,28 +305,18 @@ export function Stage({
         }}
         onPause={() => setAudioPaused(true)}
       />
-      <div className="hud">
-        <div className="pill now-playing">
-          {turn?.kind === "dj" && turn.dj
-            ? `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`
-            : turn?.musicPrompt ?? "House buffer · midnight basement disco"}
+      {dormant ? null : allowEnterOverlay && audioGate === "live" && audioPaused ? (
+        <div className="hud">
+          <button
+            className="pill audio-chip"
+            type="button"
+            onClick={() => void tryStartAudioRef.current()}
+          >
+            Unmute
+          </button>
         </div>
-        <div className="hud-right">
-          {allowEnterOverlay && audioGate === "live" && audioPaused ? (
-            <button
-              className="pill audio-chip"
-              type="button"
-              onClick={() => void tryStartAudioRef.current()}
-            >
-              Unmute
-            </button>
-          ) : null}
-          <div className="pill">
-            {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
-          </div>
-        </div>
-      </div>
-      {allowEnterOverlay && audioGate === "blocked" ? (
+      ) : null}
+      {allowEnterOverlay && !dormant && audioGate === "blocked" ? (
         <button
           className="enter-party"
           type="button"
