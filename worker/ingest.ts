@@ -1,7 +1,13 @@
 import { extractAudioUrl, extractDurationS, extractImageUrl, extractVideoUrl } from "@/lib/server/fal";
-import { enqueueFinalize, publishRoomEvent } from "@/lib/server/queues";
+import { ensureHouseJobsQueued, hydratePlayingHouseTurn } from "@/lib/server/house";
+import { isStubHouseVideo } from "@/lib/shared/media";
+import { publishRoomEvent } from "@/lib/server/queues";
 import { getJob, insertMedia, updateJob, updateParticipant, updateTurn, listJobsForTurn, getTurn } from "@/lib/server/repo";
 import { downloadUrlToBuffer, uploadBytes } from "@/lib/server/storage";
+
+function jobPayload(job: { payload: unknown }): { house?: boolean } {
+  return (job.payload ?? {}) as { house?: boolean };
+}
 
 export async function ingestFalWebhook(jobId: string, payload: unknown, status: string) {
   const job = await getJob(jobId);
@@ -14,10 +20,7 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
       result: payload as never,
       completed_at: new Date().toISOString(),
     });
-    if (job.turn_id) {
-      if (process.env.VERCEL) await finalizeTurn(job.turn_id);
-      else await enqueueFinalize(job.turn_id);
-    }
+    if (job.turn_id) await finalizeTurn(job.turn_id);
     return;
   }
   await updateJob(job.id, { status: "complete", result: payload as never, completed_at: new Date().toISOString() });
@@ -38,15 +41,52 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
     return;
   }
 
+  if (job.kind === "video" && jobPayload(job).house) {
+    const remote = extractVideoUrl(payload);
+    if (remote && !isStubHouseVideo(remote) && remote.startsWith("http")) {
+      try {
+        const { buf, contentType } = await downloadUrlToBuffer(remote);
+        const storageKey = await uploadBytes("media", `house/video/${job.id}.mp4`, buf, contentType);
+        await insertMedia({
+          kind: "house_video",
+          storageKey,
+          contentType,
+          durationMs: 10_000,
+          participantId: job.participant_id,
+        });
+      } catch {
+        await insertMedia({
+          kind: "house_video",
+          storageKey: remote,
+          contentType: "video/mp4",
+          durationMs: 10_000,
+          participantId: job.participant_id,
+        });
+      }
+    }
+    console.log(`[house] house_clip complete ${job.id}`);
+    try {
+      await hydratePlayingHouseTurn();
+      await ensureHouseJobsQueued();
+    } catch (err) {
+      console.warn("[house] refill after complete", err);
+    }
+    return;
+  }
+
   if (job.turn_id) {
-    if (process.env.VERCEL) await finalizeTurn(job.turn_id);
-    else await enqueueFinalize(job.turn_id);
+    // Finalize in-process. Redis enqueueFinalize is not enough — if the add
+    // never lands, DJ turns stay `generating` forever after music/video ingest.
+    await finalizeTurn(job.turn_id);
   }
 }
 
 export async function finalizeTurn(turnId: string) {
   const turn = await getTurn(turnId);
   if (!turn) return;
+  if (turn.generation_status === "ready" || turn.generation_status === "playing" || turn.generation_status === "complete") {
+    return;
+  }
   const jobs = await listJobsForTurn(turnId);
   const music = jobs.find((j) => j.kind === "music");
   const videos = jobs
@@ -84,7 +124,8 @@ export async function finalizeTurn(turnId: string) {
 
   const videoUrls: string[] = [];
   for (const [i, v] of videos.entries()) {
-    const remote = extractVideoUrl(v.result) || `/house/house-0${(i % 6) + 1}.mp4`;
+    const remote = extractVideoUrl(v.result);
+    if (!remote || isStubHouseVideo(remote)) continue;
     let stored = remote;
     if (remote.startsWith("http")) {
       try {

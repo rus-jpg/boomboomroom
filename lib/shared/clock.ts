@@ -42,3 +42,14 @@ export function audioDriftMs(elementCurrentTimeS: number, audioOffsetMs: number)
 export function shouldCorrectAudio(driftMs: number, thresholdMs = 180): boolean {
   return Math.abs(driftMs) > thresholdMs;
 }
+
+/** 0 at the start of the crossfade window, 1 at the clip boundary. */
+export function crossfadeProgress(
+  clipOffsetMs: number,
+  clipDurationMs = CLIP_DURATION_MS,
+  fadeMs = CROSSFADE_MS,
+): number {
+  const start = clipDurationMs - fadeMs;
+  if (clipOffsetMs <= start) return 0;
+  return clamp((clipOffsetMs - start) / fadeMs, 0, 1);
+}

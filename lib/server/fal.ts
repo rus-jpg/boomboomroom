@@ -80,8 +80,12 @@ export async function submitVideo(input: {
 }
 
 export function extractAudioUrl(payload: unknown): string | null {
-  const p = payload as { audio?: { url?: string }; payload?: { audio?: { url?: string } } };
-  return p?.audio?.url || p?.payload?.audio?.url || null;
+  const p = payload as {
+    audio?: { url?: string };
+    payload?: { audio?: { url?: string } };
+    data?: { audio?: { url?: string } };
+  };
+  return p?.audio?.url || p?.payload?.audio?.url || p?.data?.audio?.url || null;
 }
 
 export function extractImageUrl(payload: unknown): string | null {
@@ -105,8 +109,9 @@ export function extractVideoUrl(payload: unknown): string | null {
   const p = payload as {
     video?: { url?: string };
     payload?: { video?: { url?: string } };
+    data?: { video?: { url?: string } };
   };
-  return p?.video?.url || p?.payload?.video?.url || null;
+  return p?.video?.url || p?.payload?.video?.url || p?.data?.video?.url || null;
 }
 
 export function extractDurationS(payload: unknown): number | null {

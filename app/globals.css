@@ -152,11 +152,31 @@ textarea { min-height: 120px; resize: vertical; }
 .stage-fallback {
   z-index: 0;
   background:
-    radial-gradient(50% 40% at 50% 40%, #ff2d6a 0%, transparent 55%),
-    linear-gradient(120deg, #1a0a14, #071018);
+    radial-gradient(42% 48% at 18% 28%, rgba(94, 231, 255, 0.2), transparent 58%),
+    radial-gradient(40% 42% at 82% 62%, rgba(255, 176, 32, 0.16), transparent 55%),
+    radial-gradient(28% 32% at 52% 78%, rgba(168, 85, 247, 0.18), transparent 52%),
+    linear-gradient(120deg, #0a0810, #071018);
+  animation: club-breathe 7s ease-in-out infinite;
+}
+@keyframes club-breathe {
+  0%, 100% { filter: saturate(1) brightness(1); }
+  50% { filter: saturate(1.15) brightness(1.08); }
 }
 .stage-wrap video { z-index: 1; }
-.stage-wrap .hud { z-index: 2; }
+.stage-warming {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 0 18px rgba(94, 231, 255, 0.35);
+}
+.stage-wrap .hud { z-index: 3; }
 .hud {
   position: absolute;
   inset: 0;
