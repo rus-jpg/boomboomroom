@@ -1,0 +1,1 @@
+Latin subsets of [Syne](https://fonts.google.com/specimen/Syne) (700) and [Outfit](https://fonts.google.com/specimen/Outfit) (400) from Fontsource, used by the generated share card. Both are SIL Open Font License 1.1.
