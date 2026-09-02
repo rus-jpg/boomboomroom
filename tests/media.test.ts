@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isPlayableVideoUrl, isStubHouseVideo } from "../lib/shared/media";
-import { houseClipPrompt } from "../lib/shared/house-prompt";
+import { houseClipPrompt, houseMusicPrompt } from "../lib/shared/house-prompt";
+import { isPlayableAudioUrl, isPlayableVideoUrl, isStubHouseAudio, isStubHouseVideo } from "../lib/shared/media";
+import { RESIDENT_SEEDS, residentSessionHash } from "../lib/shared/residents";
 
 describe("house livestream urls", () => {
   it("treats empty and public stubs as not playable", () => {
@@ -23,10 +24,34 @@ describe("house clip prompt", () => {
     expect(prompt).toMatch(/768P/);
   });
 
-  it("rotates camera and mood so the auto-prompter stays fresh", () => {
-    const a = houseClipPrompt(0);
-    const b = houseClipPrompt(7);
-    expect(a).not.toBe(b);
-    expect(b).toMatch(/neon sweat|fog and lasers|crowd silhouettes|DJ booth|wet concrete|strobe|basement/i);
+  it("asks for dancing bodies and DJ performance", () => {
+    const prompt = houseClipPrompt(2, { display_name: "Neon Mira", character_prompt: "magenta DJ" });
+    expect(prompt).toMatch(/dancing|DJ performance|crowd moving/i);
+    expect(prompt).toMatch(/Neon Mira/);
+  });
+});
+
+describe("house music beds", () => {
+  it("writes instrumental Music 3 prompts", () => {
+    expect(houseMusicPrompt(0)).toMatch(/BPM/i);
+    expect(houseMusicPrompt(0)).toMatch(/instrumental/i);
+    expect(houseMusicPrompt(0)).not.toBe(houseMusicPrompt(2));
+  });
+});
+
+describe("house audio stubs", () => {
+  it("treats the public mp3 as last-resort only", () => {
+    expect(isStubHouseAudio("/house/house-audio.mp3")).toBe(true);
+    expect(isPlayableAudioUrl("house/audio/abc.wav")).toBe(true);
+  });
+});
+
+describe("resident crew", () => {
+  it("seeds five named house DJs", () => {
+    expect(RESIDENT_SEEDS.length).toBeGreaterThanOrEqual(5);
+    expect(RESIDENT_SEEDS.map((r) => r.displayName)).toEqual(
+      expect.arrayContaining(["Neon Mira", "Basement Kev", "Vinyl Ghost"]),
+    );
+    expect(residentSessionHash("neon-mira")).toBe("resident:neon-mira");
   });
 });

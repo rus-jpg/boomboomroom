@@ -11,3 +11,12 @@ export function isStubHouseVideo(url: string | null | undefined): boolean {
 export function isPlayableVideoUrl(url: string | null | undefined): boolean {
   return Boolean(url) && !isStubHouseVideo(url);
 }
+
+export function isStubHouseAudio(url: string | null | undefined): boolean {
+  if (!url) return true;
+  return /\/house\/house-audio/.test(url);
+}
+
+export function isPlayableAudioUrl(url: string | null | undefined): boolean {
+  return Boolean(url) && !isStubHouseAudio(url);
+}

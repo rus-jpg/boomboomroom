@@ -228,7 +228,7 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
         <div className="pill now-playing">
           {turn?.kind === "dj" && turn.dj
             ? `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`
-            : "House buffer · midnight basement disco"}
+            : turn?.musicPrompt ?? "House buffer · midnight basement disco"}
         </div>
         <div className="pill">
           {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s

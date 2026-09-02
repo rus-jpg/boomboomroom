@@ -4,13 +4,15 @@ import Redis from "ioredis";
 import { QUEUES } from "@/lib/shared/constants";
 import { isMockMode, redisUrl } from "@/lib/server/env";
 import { ensureHouseJobsQueued, hydratePlayingHouseTurn, isHouseJob } from "@/lib/server/house";
-import { pollFalQueue, submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
+import { pollFalQueue, submitCharacter, submitMusic, submitResidentPortrait, submitVideo } from "@/lib/server/fal";
+import { ensureResidents } from "@/lib/server/residents";
 import { publishRoomEvent } from "@/lib/server/queues";
 import {
   claimQueuedJob,
   getJob,
   getParticipant,
   insertMedia,
+  listCompleteHouseJobs,
   listGeneratingTurns,
   listQueuedJobs,
   listRunningFalJobs,
@@ -19,7 +21,7 @@ import {
 } from "@/lib/server/repo";
 import { redisConnection } from "@/lib/server/redis";
 import { signedUrl, uploadBytes } from "@/lib/server/storage";
-import { finalizeTurn, ingestFalWebhook } from "./ingest";
+import { ensureHouseMediaStored, finalizeTurn, ingestFalWebhook } from "./ingest";
 import { mockCharacterJpeg } from "./mock";
 
 const RECLAIM_MS = 12_000;
@@ -45,10 +47,12 @@ async function handleCharacter(jobId: string) {
   const person = await getParticipant(job.participant_id);
   if (!person) return;
 
+  const payload = (job.payload ?? {}) as { resident?: boolean };
+  const isResident = person.is_resident || payload.resident === true;
   const faceKey = person.original_face_url;
   const faceUrl = faceKey ? (await signedUrl(faceKey, FACE_SIGNED_TTL_S)) || faceKey : "";
   const imageUrl = faceUrl.startsWith("http") ? faceUrl : "";
-  if (!isMockMode() && !imageUrl) {
+  if (!isMockMode() && !imageUrl && !isResident) {
     await updateJob(job.id, {
       status: "failed",
       error: "face image is not publicly fetchable for fal",
@@ -56,11 +60,13 @@ async function handleCharacter(jobId: string) {
     });
     return;
   }
-  const submitted = await submitCharacter({
-    imageUrl: imageUrl || "https://fal.media/files/placeholder.jpg",
-    prompt: person.character_prompt,
-    jobId: job.id,
-  });
+  const submitted = isResident
+    ? await submitResidentPortrait({ prompt: person.character_prompt, jobId: job.id })
+    : await submitCharacter({
+        imageUrl: imageUrl || "https://fal.media/files/placeholder.jpg",
+        prompt: person.character_prompt,
+        jobId: job.id,
+      });
   await updateJob(job.id, { fal_request_id: submitted.requestId });
 
   if (submitted.mock) {
@@ -84,21 +90,26 @@ async function handleCharacter(jobId: string) {
 
 async function handleMusic(jobId: string) {
   const job = await takeQueued(jobId);
-  if (!job || !job.turn_id) return;
-  const payload = (job.payload ?? {}) as { prompt?: string; lyrics?: string };
+  if (!job) return;
+  const payload = (job.payload ?? {}) as { prompt?: string; lyrics?: string; house?: boolean };
+  const isHouse = payload.house === true;
+  if (!isHouse && !job.turn_id) return;
   const submitted = await submitMusic({
     prompt: payload.prompt || "Genre: midnight disco. BPM: 118.",
     lyrics: payload.lyrics,
     jobId: job.id,
   });
   await updateJob(job.id, { fal_request_id: submitted.requestId });
+  if (isHouse) {
+    console.log(`[worker] house_bed submit ${job.id} fal=${submitted.requestId} mock=${submitted.mock}`);
+  }
   if (submitted.mock) {
     await updateJob(job.id, {
       status: "complete",
       completed_at: new Date().toISOString(),
-      result: { mock: true, audio: { url: "/house/house-audio.mp3" }, duration: 60 },
+      result: { mock: true, house: isHouse, audio: { url: "/house/house-audio.mp3" }, duration: 60 },
     });
-    await finalizeTurn(job.turn_id);
+    if (!isHouse && job.turn_id) await finalizeTurn(job.turn_id);
   }
 }
 
@@ -182,11 +193,26 @@ async function finalizeGeneratingTurns() {
   }
 }
 
+async function backfillHouseMedia() {
+  const jobs = await listCompleteHouseJobs();
+  for (const job of jobs) {
+    try {
+      const added = await ensureHouseMediaStored(job);
+      if (!added) continue;
+      console.log(`[worker] backfilled house media ${job.id}`);
+      await hydratePlayingHouseTurn();
+    } catch (err) {
+      console.error(`[worker] house backfill ${job.id}`, err);
+    }
+  }
+}
+
 /** House livestream is independent of DJ music jobs. */
 async function ensureHouseLivestream() {
   try {
     const spawned = await ensureHouseJobsQueued();
     if (spawned) console.log(`[worker] queued ${spawned} house_clip job(s)`);
+    await backfillHouseMedia();
     await hydratePlayingHouseTurn();
   } catch (err) {
     console.error("[worker] house livestream", err);
@@ -239,7 +265,13 @@ async function main() {
     console.log("[worker] REDIS_URL missing — DB claim loop only (no BullMQ)");
   }
 
-  console.log("[worker] bootstrapping house_clip buffer");
+  console.log("[worker] bootstrapping residents + house_clip buffer");
+  try {
+    const n = await ensureResidents();
+    if (n) console.log(`[worker] queued ${n} resident portrait(s)`);
+  } catch (err) {
+    console.error("[worker] ensureResidents", err);
+  }
   await tick();
   setInterval(() => {
     void tick();

@@ -15,6 +15,7 @@ export const SESSION_TTL_DAYS = 30;
 export const MUSIC_MODEL = "minimax/music-3";
 export const VIDEO_MODEL = "minimax/h3-max/reference-to-video";
 export const DEFAULT_CHARACTER_MODEL = "fal-ai/flux-pro/kontext";
+export const RESIDENT_PORTRAIT_MODEL = "fal-ai/flux-pro";
 
 export const VIDEO_RESOLUTION = "768P" as const;
 export const VIDEO_ASPECT = "16:9" as const;

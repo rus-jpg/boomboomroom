@@ -2,7 +2,12 @@ import { fal } from "@fal-ai/client";
 import { MUSIC_MODEL, VIDEO_ASPECT, VIDEO_DURATION_S, VIDEO_MODEL, VIDEO_RESOLUTION } from "@/lib/shared/constants";
 import { characterModel, isMockMode, webhookBaseUrl } from "./env";
 
-export function falEndpointForKind(kind: "character" | "music" | "video"): string {
+export function falEndpointForKind(
+  kind: "character" | "music" | "video",
+  payload?: unknown,
+): string {
+  const fromPayload = (payload as { endpoint?: string } | null)?.endpoint;
+  if (fromPayload) return fromPayload;
   if (kind === "character") return characterModel();
   if (kind === "music") return MUSIC_MODEL;
   return VIDEO_MODEL;
@@ -29,6 +34,23 @@ export async function submitCharacter(input: {
       image_url: input.imageUrl,
       aspect_ratio: "1:1",
       output_format: "jpeg",
+      safety_tolerance: "2",
+    },
+    webhookUrl: `${webhookBaseUrl()}/api/webhooks/fal?jobId=${input.jobId}`,
+  });
+  return { requestId: request_id, mock: false };
+}
+
+export async function submitResidentPortrait(input: {
+  prompt: string;
+  jobId: string;
+}): Promise<FalSubmitResult> {
+  if (isMockMode()) return { requestId: `mock-resident-${input.jobId}`, mock: true };
+  configureFal();
+  const { request_id } = await fal.queue.submit("fal-ai/flux-pro", {
+    input: {
+      prompt: `Cinematic club-ready character portrait, square 1:1, photoreal film still, 35mm, moody nightclub lighting, no text, no watermark. ${input.prompt}`,
+      image_size: "square_hd",
       safety_tolerance: "2",
     },
     webhookUrl: `${webhookBaseUrl()}/api/webhooks/fal?jobId=${input.jobId}`,
@@ -124,11 +146,12 @@ export function extractDurationS(payload: unknown): number | null {
 export async function pollFalQueue(job: {
   kind: "character" | "music" | "video";
   fal_request_id: string | null;
+  payload?: unknown;
 }): Promise<{ status: "OK" | "ERROR"; payload: unknown } | null> {
   const requestId = job.fal_request_id;
   if (!requestId || requestId.startsWith("mock-") || isMockMode()) return null;
   configureFal();
-  const endpoint = falEndpointForKind(job.kind);
+  const endpoint = falEndpointForKind(job.kind, job.payload);
   let st: { status?: string };
   try {
     st = await fal.queue.status(endpoint, { requestId });

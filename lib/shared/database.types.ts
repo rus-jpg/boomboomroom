@@ -140,6 +140,7 @@ export type Database = {
           regenerate_used: boolean;
           session_token_hash: string;
           status: Database["public"]["Enums"]["participant_status"];
+          is_resident: boolean;
         };
         Insert: {
           banned_until?: string | null;
@@ -155,6 +156,7 @@ export type Database = {
           regenerate_used?: boolean;
           session_token_hash: string;
           status?: Database["public"]["Enums"]["participant_status"];
+          is_resident?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["participants"]["Insert"]>;
         Relationships: [];
