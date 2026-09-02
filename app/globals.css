@@ -701,10 +701,10 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .people-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
   gap: 6px 8px;
   align-content: start;
-  padding: 6px 4px 0;
+  padding: 8px 6px 0;
   overflow: visible;
 }
 .person-tile {
@@ -713,7 +713,7 @@ textarea { min-height: 120px; resize: vertical; }
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 4px 0 0;
+  padding: 6px 2px 0;
   border: 0;
   background: none;
   text-align: center;
@@ -722,9 +722,18 @@ textarea { min-height: 120px; resize: vertical; }
 .person-tile.is-muted {
   opacity: 0.78;
 }
+.person-face {
+  position: relative;
+  width: min(100%, 76px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  flex: none;
+}
 .person-portrait {
   position: relative;
-  width: min(100%, 72px);
+  width: calc(100% - 8px);
   aspect-ratio: 1;
   border-radius: 50%;
   overflow: hidden;
@@ -732,13 +741,15 @@ textarea { min-height: 120px; resize: vertical; }
     radial-gradient(circle at 50% 28%, rgba(255, 45, 106, 0.28), transparent 58%),
     linear-gradient(180deg, #2a1620, #120810);
 }
-.person-tile.is-dj .person-portrait {
+.person-tile.is-dj .person-face {
   outline: 2px solid var(--amber);
-  outline-offset: 2px;
+  outline-offset: -1px;
+  border-radius: 50%;
 }
-.person-tile.is-creating .person-portrait {
+.person-tile.is-creating .person-face {
   outline: 1px solid rgba(255, 176, 32, 0.5);
-  outline-offset: 2px;
+  outline-offset: -1px;
+  border-radius: 50%;
 }
 .person-spinner {
   position: absolute;
@@ -821,7 +832,8 @@ textarea { min-height: 120px; resize: vertical; }
   flex: none;
 }
 .chat-form { display: flex; gap: 8px; margin-top: 6px; flex: none; }
-.chat-form input {
+.chat-form input,
+.chat-form input[type="text"] {
   flex: 1;
   padding: 8px 16px;
   border-radius: 999px;

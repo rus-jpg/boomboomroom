@@ -375,14 +375,16 @@ export function RoomClient({
                     key={p.id}
                     title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
                   >
-                    <div className="person-portrait">
-                      {p.characterUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img className="avatar" src={p.characterUrl} alt="" />
-                      ) : (
-                        <div className="avatar" aria-hidden />
-                      )}
-                      {creating ? <span className="person-spinner" aria-hidden /> : null}
+                    <div className="person-face">
+                      <div className="person-portrait">
+                        {p.characterUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img className="avatar" src={p.characterUrl} alt="" />
+                        ) : (
+                          <div className="avatar" aria-hidden />
+                        )}
+                        {creating ? <span className="person-spinner" aria-hidden /> : null}
+                      </div>
                     </div>
                     <strong className="person-name">{p.displayName}</strong>
                     {creating ? (
@@ -445,7 +447,7 @@ export function RoomClient({
               sendChat(body);
             }}
           >
-            <input value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
+            <input type="text" value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
             <button type="submit">Send</button>
           </form>
           {chatError ? <p className="chat-error">{chatError}</p> : null}
