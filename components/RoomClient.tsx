@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { HOUSE_AUDIO_PATH, PRODUCT_NAME } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import type { RoomState, SessionView } from "@/lib/shared/types";
+import { CastForm } from "./CastForm";
 import { Stage } from "./Stage";
 
 function demoPortrait(hue: number): string {
@@ -86,11 +87,13 @@ export function RoomClient({
   realtimeUrl,
 }: {
   initial: RoomState;
-  session: SessionView;
+  session: SessionView | null;
   realtimeUrl: string;
 }) {
   const router = useRouter();
-  const [state, setState] = useState(initial);
+  const [state, setState] = useState(() =>
+    !session && !realtimeUrl ? demoState("Guest") : initial,
+  );
   const [socketReady, setSocketReady] = useState(false);
   const [chat, setChat] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -105,6 +108,10 @@ export function RoomClient({
   }, []);
 
   useEffect(() => {
+    if (!session) {
+      if (!realtimeUrl) setState(demoState("Guest"));
+      return;
+    }
     if (!realtimeUrl) {
       setState(demoState(session.displayName));
       return;
@@ -133,20 +140,22 @@ export function RoomClient({
       socket?.disconnect();
       socketRef.current = null;
     };
-  }, [realtimeUrl, session.displayName]);
+  }, [realtimeUrl, session]);
 
   const clock = useMemo(() => {
     const start = state.currentTurn?.startsAt ? new Date(state.currentTurn.startsAt).getTime() : now;
     return clockFromStart(start, now);
   }, [state.currentTurn, now]);
 
-  const myStatus =
-    state.participants.find((p) => p.id === session.participantId)?.status ?? session.status;
-  const myCompose = state.compose?.participantId === session.participantId;
+  const myStatus = session
+    ? (state.participants.find((p) => p.id === session.participantId)?.status ?? session.status)
+    : null;
+  const myCompose = Boolean(session && state.compose?.participantId === session.participantId);
   const composeLeft = state.compose
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
-  const inQueue = state.queue.some((q) => q.participantId === session.participantId);
+  const inQueue = Boolean(session && state.queue.some((q) => q.participantId === session.participantId));
+  const guest = !session;
 
   function emit(event: string, payload?: unknown) {
     const socket = socketRef.current;
@@ -160,7 +169,8 @@ export function RoomClient({
   }
 
   return (
-    <div className="room-shell">
+    <>
+      <div className="room-shell" inert={guest || undefined}>
       <header style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", alignItems: "center" }}>
         <strong className="display">{PRODUCT_NAME}</strong>
         <span className="pill">
@@ -304,6 +314,14 @@ export function RoomClient({
         </div>
       ) : null}
 
+      {session?.banned ? (
+        <div className="processing">
+          <div>
+            <h2 className="display">You're out</h2>
+          </div>
+        </div>
+      ) : null}
+
       {notice ? (
         <p style={{ textAlign: "center", color: "var(--amber)", paddingBottom: 16 }}>
           {notice}{" "}
@@ -312,6 +330,12 @@ export function RoomClient({
           </button>
         </p>
       ) : null}
-    </div>
+      </div>
+      {guest ? (
+        <div className="cast-modal" role="dialog" aria-modal="true" aria-labelledby="cast-title">
+          <CastForm onCast={() => router.refresh()} />
+        </div>
+      ) : null}
+    </>
   );
 }
