@@ -768,62 +768,87 @@ export async function listInflightHouseMusicJobs(): Promise<Job[]> {
 
 const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
 
-/** Worker-owned claim: queued jobs Vercel never put on Redis. House clips first so DJ music never starves the livestream. */
+function sortQueuedForWorker(jobs: Job[]): Job[] {
+  const rank = (job: Job) => {
+    if (job.turn_id && !isHousePayloadJob(job)) return 0;
+    if (isHousePayloadJob(job)) return 2;
+    return 1;
+  };
+  return [...jobs].sort((a, b) => {
+    const d = rank(a) - rank(b);
+    if (d !== 0) return d;
+    return a.created_at.localeCompare(b.created_at);
+  });
+}
+
+/** Worker-owned claim: queued jobs Vercel never put on Redis. DJ turn jobs first so house livestream cannot starve music. */
 export async function listQueuedJobs(): Promise<Job[]> {
   if (useRemote()) {
-    const houseVideo = await supabaseAdmin()
+    const dj = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
       .eq("status", "queued")
-      .eq("kind", "video")
-      .is("turn_id", null)
+      .in("kind", RECLAIM_KINDS)
+      .not("turn_id", "is", null)
       .order("created_at", { ascending: true })
-      .limit(12);
-    const houseMusic = await supabaseAdmin()
-      .from("generation_jobs")
-      .select("*")
-      .eq("status", "queued")
-      .eq("kind", "music")
-      .is("turn_id", null)
-      .order("created_at", { ascending: true })
-      .limit(8);
+      .limit(30);
     const rest = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
       .eq("status", "queued")
       .in("kind", RECLAIM_KINDS)
       .order("created_at", { ascending: true })
-      .limit(50);
-    const houseRows = [...(houseVideo.data ?? []), ...(houseMusic.data ?? [])];
-    const seen = new Set(houseRows.map((job) => job.id));
-    return [...houseRows, ...(rest.data ?? []).filter((job) => !seen.has(job.id))];
+      .limit(40);
+    const djRows = dj.data ?? [];
+    const seen = new Set(djRows.map((job) => job.id));
+    return sortQueuedForWorker([...djRows, ...(rest.data ?? []).filter((job) => !seen.has(job.id))]);
   }
-  const store = readStore();
-  const queued = store.jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind));
-  const house = queued.filter(isHousePayloadJob);
-  const rest = queued.filter((j) => !isHousePayloadJob(j));
-  return [...house, ...rest].sort((a, b) => {
-    const ah = isHousePayloadJob(a) ? 0 : 1;
-    const bh = isHousePayloadJob(b) ? 0 : 1;
-    if (ah !== bh) return ah - bh;
-    return a.created_at.localeCompare(b.created_at);
-  });
+  const queued = readStore().jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind));
+  return sortQueuedForWorker(queued);
 }
 
 export async function listRunningFalJobs(): Promise<Job[]> {
   if (useRemote()) {
-    const { data } = await supabaseAdmin()
+    const dj = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "running")
+      .in("kind", RECLAIM_KINDS)
+      .not("fal_request_id", "is", null)
+      .not("turn_id", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(30);
+    const rest = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
       .eq("status", "running")
       .in("kind", RECLAIM_KINDS)
       .not("fal_request_id", "is", null)
       .order("created_at", { ascending: true })
-      .limit(50);
+      .limit(40);
+    const djRows = dj.data ?? [];
+    const seen = new Set(djRows.map((job) => job.id));
+    return [...djRows, ...(rest.data ?? []).filter((job) => !seen.has(job.id))];
+  }
+  return sortQueuedForWorker(
+    readStore().jobs.filter((j) => j.status === "running" && Boolean(j.fal_request_id) && RECLAIM_KINDS.includes(j.kind)),
+  );
+}
+
+/** All running generation jobs, including those that never got a fal_request_id (hung submit). */
+export async function listRunningJobs(limit = 80): Promise<Job[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "running")
+      .in("kind", RECLAIM_KINDS)
+      .order("created_at", { ascending: true })
+      .limit(limit);
     return data ?? [];
   }
   return readStore()
-    .jobs.filter((j) => j.status === "running" && Boolean(j.fal_request_id) && RECLAIM_KINDS.includes(j.kind))
+    .jobs.filter((j) => j.status === "running" && RECLAIM_KINDS.includes(j.kind))
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
