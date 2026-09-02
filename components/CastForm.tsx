@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CHARACTER_MAX, CHARACTER_MIN, NAME_MAX, NAME_MIN } from "@/lib/shared/constants";
+import { CHARACTER_MAX, CHARACTER_MIN, NAME_MAX, NAME_MIN, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 
 export function CastForm({ onCast }: { onCast?: () => void }) {
   const router = useRouter();
@@ -28,8 +28,14 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
     setError(null);
   }
 
+  function pingUnlock() {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));
+  }
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    pingUnlock();
     setBusy(true);
     setError(null);
     const form = new FormData(e.currentTarget);
@@ -50,7 +56,7 @@ export function CastForm({ onCast }: { onCast?: () => void }) {
   }
 
   return (
-    <form className="cast-form" onSubmit={onSubmit}>
+    <form className="cast-form" onSubmit={onSubmit} onPointerDown={pingUnlock}>
       <h1 className="display" id="cast-title">
         Cast
       </h1>

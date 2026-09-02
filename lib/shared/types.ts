@@ -26,6 +26,8 @@ export type QueueEntryView = {
   status: QueueStatus;
   createdAt: string;
   position: number;
+  isResident?: boolean;
+  endsAt?: string | null;
 };
 
 export type ChatMessageView = {

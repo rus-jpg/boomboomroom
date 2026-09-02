@@ -14,8 +14,10 @@ import {
   listPresence,
   listQueue,
   listResidents,
+  listJobsForTurn,
   nextReadyDjTurn,
 } from "./repo";
+import { mergeBoothQueue } from "@/lib/shared/resident-booth";
 import { signedUrl } from "./storage";
 
 async function resolveUrl(value: string | null | undefined): Promise<string | null> {
@@ -62,16 +64,38 @@ async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): 
   if (!turn) return null;
   const dj = turn.dj_participant_id ? await getParticipant(turn.dj_participant_id) : null;
   const rawVideos = asStringArray(turn.video_segment_urls).filter((url) => isPlayableVideoUrl(url));
+  const featuredByIndex = new Map<number, { participantId: string | null; displayName: string | null }>();
+  if (turn.kind === "dj") {
+    const jobs = await listJobsForTurn(turn.id);
+    const videos = jobs
+      .filter((job) => job.kind === "video")
+      .sort((a, b) => {
+        const ai = Number((a.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
+        const bi = Number((b.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
+        return ai - bi;
+      });
+    const ids = [...new Set(videos.map((job) => job.participant_id).filter((id): id is string => Boolean(id)))];
+    const people = await listParticipantsByIds(ids);
+    const byId = new Map(people.map((p) => [p.id, p]));
+    for (const [i, job] of videos.entries()) {
+      const person = job.participant_id ? byId.get(job.participant_id) : null;
+      featuredByIndex.set(i, {
+        participantId: person?.id ?? job.participant_id ?? null,
+        displayName: person?.display_name ?? null,
+      });
+    }
+  }
   const segments: VideoSegment[] = [];
   if (rawVideos.length === 0) {
     segments.push(...emptySegments());
   } else {
     for (let i = 0; i < CLIP_COUNT; i++) {
       const resolved = await resolveUrl(rawVideos[i % rawVideos.length]);
+      const meta = featuredByIndex.get(i);
       segments.push({
         url: resolved ?? "",
-        participantId: null,
-        displayName: null,
+        participantId: meta?.participantId ?? null,
+        displayName: meta?.displayName ?? null,
       });
     }
   }
@@ -124,15 +148,15 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     const residents = await listResidents();
     for (const r of residents) {
       if (uniquePresence.has(r.id)) continue;
-      participants.push(await toPublic(r, false));
+      participants.push(await toPublic(r, r.id === djId));
     }
   }
 
-  const queueView: QueueEntryView[] = [];
+  const humanQueue: QueueEntryView[] = [];
   let position = 1;
   for (const q of queue) {
     const p = byId.get(q.participant_id);
-    queueView.push({
+    humanQueue.push({
       id: q.id,
       participantId: q.participant_id,
       displayName: p?.display_name ?? "Guest",
@@ -140,17 +164,19 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
       status: q.status,
       createdAt: q.created_at,
       position: position++,
+      isResident: Boolean(p?.is_resident),
+      endsAt: null,
     });
   }
 
-  const chatView: ChatMessageView[] = chat.map((c) => ({
-    id: c.id,
-    participantId: c.participant_id,
-    displayName: c.kind === "system" ? "Room" : (byId.get(c.participant_id ?? "")?.display_name ?? "Guest"),
-    body: c.body,
-    kind: c.kind,
-    createdAt: c.created_at,
-  }));
+  const residents = await listResidents();
+  const residentFaces = await Promise.all(
+    residents.map(async (r) => ({
+      id: r.id,
+      displayName: r.display_name,
+      characterUrl: await resolveUrl(r.character_reference_url),
+    })),
+  );
 
   const currentTurn = (await toTurnView(playing)) ?? {
     id: "house-live",
@@ -163,6 +189,23 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     endsAt: new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString(),
     dj: null,
   };
+
+  const queueView = mergeBoothQueue({
+    humans: humanQueue,
+    residents: residentFaces,
+    playingKind: currentTurn.kind,
+    playingDjId: currentTurn.dj?.id ?? playing?.dj_participant_id ?? null,
+    playingEndsAt: currentTurn.endsAt,
+  });
+
+  const chatView: ChatMessageView[] = chat.map((c) => ({
+    id: c.id,
+    participantId: c.participant_id,
+    displayName: c.kind === "system" ? "Room" : (byId.get(c.participant_id ?? "")?.display_name ?? "Guest"),
+    body: c.body,
+    kind: c.kind,
+    createdAt: c.created_at,
+  }));
 
   const startMs = currentTurn.startsAt ? new Date(currentTurn.startsAt).getTime() : Date.now();
   const composing = queue.find((q) => q.status === "preparing");

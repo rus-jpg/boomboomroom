@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CLIP_COUNT, HOUSE_AUDIO_PATH } from "@/lib/shared/constants";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart, crossfadeProgress, shouldCorrectAudio } from "@/lib/shared/clock";
 import { PLAYBACK_DRIFT_MS, isStubHouseVideo } from "@/lib/shared/media";
 import type { ClockSnapshot, TurnView } from "@/lib/shared/types";
@@ -16,7 +16,15 @@ function sameSrc(el: HTMLVideoElement, url: string): boolean {
   }
 }
 
-export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnapshot }) {
+export function Stage({
+  turn,
+  clock,
+  allowEnterOverlay = true,
+}: {
+  turn: TurnView | null;
+  clock: ClockSnapshot;
+  allowEnterOverlay?: boolean;
+}) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const v0Ref = useRef<HTMLVideoElement>(null);
   const v1Ref = useRef<HTMLVideoElement>(null);
@@ -33,6 +41,11 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
   const [playIndex, setPlayIndex] = useState(clock.clipIndex);
   const failedUrlsRef = useRef(new Set<string>());
   const [, setFailedTick] = useState(0);
+  const [audioGate, setAudioGate] = useState<"unknown" | "blocked" | "live">("unknown");
+  const [audioPaused, setAudioPaused] = useState(false);
+  const tryStartAudioRef = useRef<() => Promise<boolean>>(async () => false);
+  const audioGateRef = useRef(audioGate);
+  audioGateRef.current = audioGate;
 
   clockRef.current = clock;
   frontIs0Ref.current = frontIs0;
@@ -53,6 +66,41 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
     setFailedTick((n) => n + 1);
   }
 
+  tryStartAudioRef.current = async () => {
+    const audio = audioRef.current;
+    if (!audio) return false;
+    try {
+      const startsAt = turn?.startsAt ? new Date(turn.startsAt).getTime() : Date.now();
+      const local = clockFromStart(startsAt, Date.now());
+      const target = local.audioOffsetMs / 1000;
+      if (audio.readyState >= 1 && Number.isFinite(target) && Math.abs(audio.currentTime - target) > 0.35) {
+        audio.currentTime = Math.max(0, target);
+      }
+      audio.muted = false;
+      await audio.play();
+      setAudioGate("live");
+      setAudioPaused(false);
+      void v0Ref.current?.play().catch(() => undefined);
+      void v1Ref.current?.play().catch(() => undefined);
+      return true;
+    } catch {
+      setAudioGate("blocked");
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    const onUnlock = () => {
+      void tryStartAudioRef.current();
+    };
+    window.addEventListener(UNLOCK_AUDIO_EVENT, onUnlock);
+    document.addEventListener("pointerdown", onUnlock);
+    return () => {
+      window.removeEventListener(UNLOCK_AUDIO_EVENT, onUnlock);
+      document.removeEventListener("pointerdown", onUnlock);
+    };
+  }, []);
+
   useEffect(() => {
     primedTurnRef.current = null;
     primedIndexRef.current = null;
@@ -69,7 +117,7 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
       lastAudioUrl.current = audioUrl;
       audio.src = audioUrl;
     }
-    void audio.play().catch(() => undefined);
+    void tryStartAudioRef.current();
   }, [audioUrl]);
 
   useEffect(() => {
@@ -185,7 +233,9 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
         if (Number.isFinite(audio.currentTime) && shouldCorrectAudio(drift, PLAYBACK_DRIFT_MS)) {
           audio.currentTime = Math.max(0, target);
         }
-        if (audio.paused) void audio.play().catch(() => undefined);
+        if (audio.paused && audioGateRef.current !== "blocked") {
+          void audio.play().catch(() => undefined);
+        }
       }
 
       raf = requestAnimationFrame(loop);
@@ -205,6 +255,7 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
         playsInline
         preload="auto"
         loop={false}
+        className={op0 <= 0.02 ? "is-off" : undefined}
         onError={() => markFailed(v0Ref.current?.getAttribute("src") || currentUrl)}
         style={{ opacity: op0 }}
       />
@@ -214,6 +265,7 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
         playsInline
         preload="auto"
         loop={false}
+        className={op1 <= 0.02 ? "is-off" : undefined}
         onError={() => markFailed(v1Ref.current?.getAttribute("src") || nextUrl)}
         style={{ opacity: op1 }}
       />
@@ -223,17 +275,49 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
           warming livestream
         </div>
       ) : null}
-      <audio ref={audioRef} preload="auto" loop />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        loop
+        playsInline
+        onPlay={() => {
+          setAudioGate("live");
+          setAudioPaused(false);
+        }}
+        onPause={() => setAudioPaused(true)}
+      />
       <div className="hud">
         <div className="pill now-playing">
           {turn?.kind === "dj" && turn.dj
             ? `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`
             : turn?.musicPrompt ?? "House buffer · midnight basement disco"}
         </div>
-        <div className="pill">
-          {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
+        <div className="hud-right">
+          {allowEnterOverlay && audioGate === "live" && audioPaused ? (
+            <button
+              className="pill audio-chip"
+              type="button"
+              onClick={() => void tryStartAudioRef.current()}
+            >
+              Unmute
+            </button>
+          ) : null}
+          <div className="pill">
+            {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
+          </div>
         </div>
       </div>
+      {allowEnterOverlay && audioGate === "blocked" ? (
+        <button
+          className="enter-party"
+          type="button"
+          onClick={() => void tryStartAudioRef.current()}
+        >
+          <span className="eyebrow">The booth is live</span>
+          <strong className="display">Tap to enter</strong>
+          <span>Start the music</span>
+        </button>
+      ) : null}
     </div>
   );
 }

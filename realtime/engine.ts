@@ -3,7 +3,7 @@ import {
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
-import { ensureHouseJobsQueued, houseSetLabel, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
+import { ensureHouseJobsQueued, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { composeDeadlineMs, isComposeWindowExpired } from "@/lib/shared/compose";
 import { shouldAdvancePlayback } from "@/lib/shared/playback";
@@ -20,10 +20,15 @@ import {
   insertChat,
   insertJob,
   insertModeration,
+  insertSystemChat,
   insertTurn,
+  latestHouseTurn,
   latestPlayingTurn,
   leaveQueue,
+  leaveRoomSession,
+  listPresentReadyParticipants,
   listQueue,
+  listResidents,
   nextReadyDjTurn,
   occupancy,
   updateParticipant,
@@ -31,6 +36,8 @@ import {
   updateTurn,
 } from "@/lib/server/repo";
 import { buildRoomState } from "@/lib/server/room-state";
+import { assignDjTurnClips, djClipPrompt, shouldAnnounceHouseTakeover } from "@/lib/shared/stage-cast";
+import { pickNextResident, residentSetLabel } from "@/lib/shared/resident-booth";
 
 const chatBuckets = new Map<string, RateBucket>();
 
@@ -81,18 +88,20 @@ export class RoomEngine {
     }
   }
 
-  private async startHouse(roomId: string) {
+  private async startHouse(roomId: string, previousKind: "house" | "dj" | null = null) {
     try {
       await ensureHouseJobsQueued();
     } catch (err) {
       console.warn("[engine] house buffer enqueue", err);
     }
+    const holder = await this.nextResidentHolder(roomId);
     const bounds = turnBounds(Date.now());
     const turn = await insertTurn({
       roomId,
       kind: "house",
+      djParticipantId: holder?.id ?? null,
       generationStatus: "playing",
-      musicPrompt: await houseSetLabel(),
+      musicPrompt: residentSetLabel(holder?.display_name),
       audioUrl: HOUSE_AUDIO_PATH,
       videoSegmentUrls: [],
       startsAt: bounds.startsAt,
@@ -112,11 +121,30 @@ export class RoomEngine {
     } catch (err) {
       console.warn("[engine] house buffer refill", err);
     }
-    await insertChat({
-      roomId,
-      participantId: null,
-      body: "House takes the booth while the next set cooks.",
-      kind: "system",
+    if (shouldAnnounceHouseTakeover(previousKind)) {
+      await insertSystemChat({
+        roomId,
+        body: holder ? `${holder.display_name} takes the booth.` : "House takes the booth.",
+      });
+    }
+  }
+
+  private async nextResidentHolder(roomId: string) {
+    const residents = (await listResidents()).filter((p) => p.status === "ready" || p.character_reference_url);
+    const ordered = residents.length ? residents : await listResidents();
+    const last = await latestHouseTurn(roomId);
+    return pickNextResident(ordered, last?.dj_participant_id ?? null);
+  }
+
+  /** Legacy house turns without a resident pick up the rotation without skipping ahead every tick. */
+  private async attachResidentBooth(turn: { id: string; kind: string; dj_participant_id: string | null }) {
+    if (turn.kind !== "house" || turn.dj_participant_id) return;
+    const residents = await listResidents();
+    const holder = pickNextResident(residents, null);
+    if (!holder) return;
+    await updateTurn(turn.id, {
+      dj_participant_id: holder.id,
+      music_prompt: residentSetLabel(holder.display_name),
     });
   }
 
@@ -140,6 +168,9 @@ export class RoomEngine {
       await this.startHouse(room.id);
       return;
     }
+    if (playing.kind === "house" && !playing.dj_participant_id) {
+      await this.attachResidentBooth(playing);
+    }
     const ready = await nextReadyDjTurn(room.id);
     const now = Date.now();
     if (
@@ -155,6 +186,7 @@ export class RoomEngine {
 
     const ends = playing.ends_at ? new Date(playing.ends_at).getTime() : 0;
     const interruptingHouse = playing.kind === "house" && Boolean(ready) && ends > now + 50;
+    const previousKind = playing.kind;
 
     if (playing.kind === "dj" && playing.dj_participant_id) {
       const q = (await listQueue(room.id)).find((e) => e.participant_id === playing.dj_participant_id && e.status === "playing");
@@ -175,15 +207,13 @@ export class RoomEngine {
       const q = (await listQueue(room.id)).find((e) => e.participant_id === ready.dj_participant_id && e.status === "submitted");
       if (q) await updateQueue(q.id, "playing");
       const dj = ready.dj_participant_id ? await getParticipant(ready.dj_participant_id) : null;
-      await insertChat({
+      await insertSystemChat({
         roomId: room.id,
-        participantId: null,
         body: dj ? `${dj.display_name} takes the booth.` : "A new set drops.",
-        kind: "system",
       });
       return;
     }
-    await this.startHouse(room.id);
+    await this.startHouse(room.id, previousKind);
   }
 
   private async promoteComposer() {
@@ -194,11 +224,9 @@ export class RoomEngine {
     if (!next) return;
     await updateQueue(next.id, "preparing");
     const person = await getParticipant(next.participant_id);
-    await insertChat({
+    await insertSystemChat({
       roomId: room.id,
-      participantId: null,
       body: `${person?.display_name ?? "Someone"} has 60 seconds to drop a prompt.`,
-      kind: "system",
     });
   }
 
@@ -208,11 +236,9 @@ export class RoomEngine {
     for (const entry of queue.filter((q) => q.status === "preparing")) {
       if (!isComposeWindowExpired(entry)) continue;
       await updateQueue(entry.id, "skipped");
-      await insertChat({
+      await insertSystemChat({
         roomId: room.id,
-        participantId: null,
         body: "Booth timed out. Next up.",
-        kind: "system",
       });
     }
   }
@@ -233,6 +259,10 @@ export class RoomEngine {
   async leaveQueue(participantId: string) {
     const room = await getRoomBySlug();
     await leaveQueue(room.id, participantId);
+  }
+
+  async leaveRoom(participantId: string) {
+    await leaveRoomSession(participantId);
   }
 
   async submitPrompt(participantId: string, prompt: string, lyrics?: string) {
@@ -264,20 +294,22 @@ export class RoomEngine {
       payload: { prompt: clean, lyrics: lyrics ?? null },
     });
 
-    const readyPeople = (await import("@/lib/server/repo")).listReadyParticipants;
-    const roster = await readyPeople();
-    const rotation = roster.length ? roster : [person];
+    const present = await listPresentReadyParticipants(room.id);
+    const others = present.filter((p) => p.id !== person.id && p.character_reference_url);
+    const casts = assignDjTurnClips(person, others);
 
-    for (let i = 0; i < 6; i++) {
-      const featured = rotation[i % rotation.length];
+    for (let i = 0; i < casts.length; i++) {
+      const { role, person: featured } = casts[i];
+      const face = featured ?? (role === "booth" ? person : null);
       const videoJob = await insertJob({
         kind: "video",
         turnId: turn.id,
-        participantId: featured.id,
+        participantId: face?.id ?? null,
         payload: {
           clipIndex: i,
-          prompt: `Image 1 is ${featured.display_name}, ${featured.character_prompt}. Nightclub music video, 16:9, cinematic, moving with the track: ${clean}. Clip ${i + 1} of 6.`,
-          referenceImageUrl: featured.character_reference_url,
+          role,
+          prompt: djClipPrompt({ role, person: face, track: clean, clipIndex: i }),
+          referenceImageUrl: face?.character_reference_url ?? null,
         },
       });
       if (hasRedis()) await enqueueVideo(videoJob.id, turn.id, i);
@@ -288,11 +320,9 @@ export class RoomEngine {
       await this.mockReady(turn.id, clean);
     }
 
-    await insertChat({
+    await insertSystemChat({
       roomId: room.id,
-      participantId: null,
       body: `${person.display_name} locked a prompt. Generating the set…`,
-      kind: "system",
     });
     return turn;
   }

@@ -4,13 +4,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createParticipant,
+  createResident,
   enqueueDj,
   getQueueEntry,
   getRoomBySlug,
   getTurn,
   insertTurn,
   latestPlayingTurn,
+  updateParticipant,
   updateQueue,
+  updateTurn,
 } from "../lib/server/repo";
 import { RoomEngine } from "../realtime/engine";
 
@@ -115,5 +118,68 @@ describe("advancePlayback house interrupt", () => {
     expect((await latestPlayingTurn(room.id))?.id).toBe(playing.id);
     expect((await getQueueEntry(liveEntry.id))?.status).toBe("playing");
     expect((await getQueueEntry(nextEntry.id))?.status).toBe("submitted");
+  });
+});
+
+describe("resident booth rotation", () => {
+  it("rotates residents on successive house turns and yields to a ready human", async () => {
+    const room = await getRoomBySlug();
+    const mira = await createResident({
+      sessionHash: "resident:neon-mira",
+      displayName: "Neon Mira",
+      characterPrompt: "sharp chrome bangs, magenta underlights",
+    });
+    const kev = await createResident({
+      sessionHash: "resident:basement-kev",
+      displayName: "Basement Kev",
+      characterPrompt: "shaved head, gold tooth, vintage rave jacket",
+    });
+    await updateParticipant(mira.id, { status: "ready" });
+    await updateParticipant(kev.id, { status: "ready" });
+
+    const engine = new RoomEngine();
+    await engine.advancePlayback();
+    const first = await latestPlayingTurn(room.id);
+    expect(first?.kind).toBe("house");
+    expect(first?.dj_participant_id).toBe(mira.id);
+
+    await updateTurn(first!.id, {
+      generation_status: "complete",
+      ends_at: new Date(Date.now() - 100).toISOString(),
+    });
+    await engine.advancePlayback();
+    const second = await latestPlayingTurn(room.id);
+    expect(second?.id).not.toBe(first?.id);
+    expect(second?.dj_participant_id).toBe(kev.id);
+
+    const human = await createParticipant({
+      sessionHash: "human-dj",
+      displayName: "Velvet",
+      characterPrompt: "silver sequin dancer in the booth",
+      ipHash: null,
+    });
+    const entry = await enqueueDj(room.id, human.id);
+    await updateQueue(entry.id, "submitted");
+    await insertTurn({
+      roomId: room.id,
+      kind: "dj",
+      djParticipantId: human.id,
+      generationStatus: "ready",
+      musicPrompt: "acid disco",
+    });
+    await engine.advancePlayback();
+    const live = await latestPlayingTurn(room.id);
+    expect(live?.kind).toBe("dj");
+    expect(live?.dj_participant_id).toBe(human.id);
+
+    await updateTurn(live!.id, {
+      generation_status: "complete",
+      ends_at: new Date(Date.now() - 100).toISOString(),
+    });
+    await updateQueue(entry.id, "done");
+    await engine.advancePlayback();
+    const resumed = await latestPlayingTurn(room.id);
+    expect(resumed?.kind).toBe("house");
+    expect(resumed?.dj_participant_id).toBe(mira.id);
   });
 });

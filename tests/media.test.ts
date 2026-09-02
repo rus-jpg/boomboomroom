@@ -25,9 +25,10 @@ describe("house clip prompt", () => {
   });
 
   it("asks for dancing bodies and DJ performance", () => {
-    const prompt = houseClipPrompt(2, { display_name: "Neon Mira", character_prompt: "magenta DJ" });
-    expect(prompt).toMatch(/dancing|DJ performance|crowd moving/i);
+    const prompt = houseClipPrompt(2, { display_name: "Neon Mira", character_prompt: "magenta DJ" }, "dancer");
+    expect(prompt).toMatch(/dancing|dancefloor|club floor/i);
     expect(prompt).toMatch(/Neon Mira/);
+    expect(prompt).toMatch(/NOT in the DJ booth/);
   });
 });
 

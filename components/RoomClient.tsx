@@ -1,9 +1,9 @@
 "use client";
 
 import { io, type Socket } from "socket.io-client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HOUSE_AUDIO_PATH, PRODUCT_NAME } from "@/lib/shared/constants";
+import { HOUSE_AUDIO_PATH, PRODUCT_NAME, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { CastForm } from "./CastForm";
@@ -28,8 +28,8 @@ function demoState(name: string): RoomState {
   const start = Math.floor(Date.now() / 60_000) * 60_000;
   const crew = [
     { id: "me", displayName: name, hue: 332, isDj: false, isResident: false, muted: false },
-    { id: "res-1", displayName: "House Cat", hue: 188, isDj: false, isResident: true, muted: false },
-    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: true, isResident: false, muted: false },
+    { id: "res-1", displayName: "House Cat", hue: 188, isDj: true, isResident: true, muted: false },
+    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: false, isResident: false, muted: false },
     { id: "p-3", displayName: "Neon Fox", hue: 312, isDj: false, isResident: false, muted: false },
     { id: "p-4", displayName: "Basement", hue: 262, isDj: false, isResident: false, muted: true },
     { id: "p-5", displayName: "Acid Mira", hue: 148, isDj: false, isResident: false, muted: false },
@@ -53,13 +53,63 @@ function demoState(name: string): RoomState {
       isDj: p.isDj,
       isResident: p.isResident,
     })),
-    queue: [],
+    queue: [
+      {
+        id: "rq-1",
+        participantId: "res-1",
+        displayName: "House Cat",
+        characterUrl: demoPortrait(188),
+        status: "playing" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 1,
+        isResident: true,
+        endsAt: new Date(start + 60_000).toISOString(),
+      },
+      {
+        id: "rq-2",
+        participantId: "res-2",
+        displayName: "Neon Mira",
+        characterUrl: demoPortrait(312),
+        status: "waiting" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 2,
+        isResident: true,
+        endsAt: null,
+      },
+      {
+        id: "rq-3",
+        participantId: "res-3",
+        displayName: "Basement Kev",
+        characterUrl: demoPortrait(38),
+        status: "waiting" as const,
+        createdAt: new Date(start).toISOString(),
+        position: 3,
+        isResident: true,
+        endsAt: null,
+      },
+    ],
     chat: [
+      {
+        id: "u1",
+        participantId: "p-3",
+        displayName: "Neon Fox",
+        body: "this bass is illegal",
+        kind: "chat",
+        createdAt: new Date(start - 12_000).toISOString(),
+      },
+      {
+        id: "u2",
+        participantId: "dj-1",
+        displayName: "Velvet",
+        body: "locking a prompt, hold on",
+        kind: "chat",
+        createdAt: new Date(start - 8_000).toISOString(),
+      },
       {
         id: "sys",
         participantId: null,
         displayName: "Room",
-        body: "Demo booth is live. House is holding the floor.",
+        body: "House Cat takes the booth.",
         kind: "system",
         createdAt: new Date().toISOString(),
       },
@@ -68,7 +118,7 @@ function demoState(name: string): RoomState {
       id: "house-demo",
       kind: "house",
       generationStatus: "playing",
-      musicPrompt: "House buffer",
+      musicPrompt: "Resident set · House Cat",
       audioUrl: HOUSE_AUDIO_PATH,
       videoSegments: Array.from({ length: 6 }, () => ({ url: "", participantId: null, displayName: null })),
       startsAt: new Date(start).toISOString(),
@@ -99,6 +149,9 @@ export function RoomClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(initial.clock.serverNow);
   const socketRef = useRef<Socket | null>(null);
+  const [sessionGone, setSessionGone] = useState(false);
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -145,15 +198,26 @@ export function RoomClient({
     return clockFromStart(start, now);
   }, [state.currentTurn, now]);
 
-  const myStatus = session
-    ? (state.participants.find((p) => p.id === session.participantId)?.status ?? session.status)
+  const liveSession = sessionGone ? null : session;
+  const guest = !liveSession;
+  const myStatus = liveSession
+    ? (state.participants.find((p) => p.id === liveSession.participantId)?.status ?? liveSession.status)
     : null;
-  const myCompose = Boolean(session && state.compose?.participantId === session.participantId);
+  const myCompose = Boolean(liveSession && state.compose?.participantId === liveSession.participantId);
   const composeLeft = state.compose
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
-  const inQueue = Boolean(session && state.queue.some((q) => q.participantId === session.participantId));
-  const guest = !session;
+  const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
+
+  useEffect(() => {
+    if (session?.participantId) setSessionGone(false);
+  }, [session?.participantId]);
+
+  useLayoutEffect(() => {
+    const el = chatLogRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [state.chat]);
 
   function emit(event: string, payload?: unknown) {
     const socket = socketRef.current;
@@ -166,32 +230,70 @@ export function RoomClient({
     });
   }
 
+  function boothLeft(endsAt: string | null | undefined): string | null {
+    if (!endsAt) return null;
+    const s = Math.max(0, Math.ceil((new Date(endsAt).getTime() - now) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
+  async function exitRoom() {
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      await new Promise<void>((resolve) => {
+        const t = window.setTimeout(resolve, 800);
+        socket.emit("room:leave", () => {
+          window.clearTimeout(t);
+          resolve();
+        });
+      });
+      socket.disconnect();
+    }
+    await fetch("/api/session", { method: "DELETE" }).catch(() => undefined);
+    setSessionGone(true);
+  }
+
   return (
     <>
       <div className="room-shell" inert={guest || undefined}>
+      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
+      <div className="stage-bottom-fade" aria-hidden />
       <header className="room-header">
         <strong className="display">{PRODUCT_NAME}</strong>
-        <span className="pill">
-          {state.occupancy}/{state.maxOccupancy}
-          {state.mockMode ? " · mock gen" : ""}
-          {!socketReady ? " · house clock" : ""}
-        </span>
+        <div className="room-header-actions">
+          <span className="pill">
+            {state.occupancy}/{state.maxOccupancy}
+            {state.mockMode ? " · mock gen" : ""}
+            {!socketReady ? " · house clock" : ""}
+          </span>
+          {!guest ? (
+            <button className="exit-room" type="button" onClick={() => void exitRoom()}>
+              Exit room
+            </button>
+          ) : null}
+        </div>
       </header>
-      <Stage turn={state.currentTurn} clock={clock} />
       <div className="room-body">
         <section className="panel">
           <h2>Booth queue</h2>
           <div className="panel-scroll">
             {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
-            {state.queue.map((q) => (
-              <div className="queue-item" key={q.id}>
-                <span>{String(q.position).padStart(2, "0")}</span>
-                <div>
-                  <strong>{q.displayName}</strong>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{q.status}</div>
+            {state.queue.map((q) => {
+              const left = boothLeft(q.endsAt);
+              return (
+                <div className={`queue-item${q.isResident ? " is-resident" : ""}`} key={q.id}>
+                  <span>{String(q.position).padStart(2, "0")}</span>
+                  <div className="queue-copy">
+                    <strong>{q.displayName}</strong>
+                    <div className="queue-meta">
+                      {q.isResident ? "Resident" : null}
+                      {q.isResident ? " · " : null}
+                      {q.status}
+                    </div>
+                  </div>
+                  {left ? <span className="queue-timer">{left}</span> : null}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {inQueue ? (
             <button className="secondary" type="button" onClick={() => emit("queue:leave")}>
@@ -244,10 +346,18 @@ export function RoomClient({
         </section>
         <section className="panel">
           <h2>Open chat</h2>
-          <div className="chat-log">
+          <div
+            className="chat-log"
+            ref={chatLogRef}
+            onScroll={() => {
+              const el = chatLogRef.current;
+              if (!el) return;
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+            }}
+          >
             {state.chat.slice(-40).map((m) => (
-              <div className="chat-line" key={m.id}>
-                <strong>{m.displayName}</strong>
+              <div className={`chat-line${m.kind === "system" ? " is-system" : ""}`} key={m.id}>
+                {m.kind === "system" ? <span className="chat-sys-label">Room</span> : <strong>{m.displayName}</strong>}
                 <span>{m.body}</span>
               </div>
             ))}
@@ -310,7 +420,7 @@ export function RoomClient({
         </div>
       ) : null}
 
-      {session?.banned ? (
+      {session?.banned && !guest ? (
         <div className="processing">
           <div>
             <h2 className="display">You're out</h2>
@@ -329,7 +439,13 @@ export function RoomClient({
       </div>
       {guest ? (
         <div className="cast-modal" role="dialog" aria-modal="true" aria-labelledby="cast-title">
-          <CastForm onCast={() => router.refresh()} />
+          <CastForm
+            onCast={() => {
+              window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));
+              setSessionGone(false);
+              router.refresh();
+            }}
+          />
         </div>
       ) : null}
     </>
