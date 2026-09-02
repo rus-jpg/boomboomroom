@@ -261,6 +261,7 @@ textarea { min-height: 120px; resize: vertical; }
 
 .room-shell {
   position: relative;
+  isolation: isolate;
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden;
@@ -281,7 +282,10 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .room-header .display {
   font-size: clamp(18px, 2.4vw, 28px);
-  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.65);
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.45),
+    0 2px 18px rgba(0, 0, 0, 0.75),
+    0 0 28px rgba(5, 5, 8, 0.8);
   pointer-events: auto;
 }
 .room-header-actions {
@@ -311,7 +315,12 @@ textarea { min-height: 120px; resize: vertical; }
   height: 100%;
   max-height: none;
   aspect-ratio: auto;
-  background: #000;
+  background:
+    radial-gradient(52% 46% at 18% 8%, rgba(94, 231, 255, 0.55), transparent 58%),
+    radial-gradient(48% 52% at 86% 38%, rgba(255, 45, 106, 0.28), transparent 52%),
+    radial-gradient(46% 48% at 84% 78%, rgba(255, 176, 32, 0.38), transparent 55%),
+    radial-gradient(40% 42% at 48% 92%, rgba(168, 85, 247, 0.4), transparent 52%),
+    linear-gradient(120deg, #1a1020, #0b1524);
   overflow: hidden;
   z-index: 0;
 }
@@ -324,12 +333,12 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .stage-fallback {
   z-index: 0;
-  background:
-    radial-gradient(48% 52% at 16% 18%, rgba(94, 231, 255, 0.42), transparent 58%),
-    radial-gradient(46% 48% at 84% 58%, rgba(255, 176, 32, 0.32), transparent 55%),
-    radial-gradient(34% 38% at 52% 82%, rgba(168, 85, 247, 0.32), transparent 52%),
-    linear-gradient(120deg, #1a1020, #0b1524);
+  background: inherit;
   animation: club-breathe 7s ease-in-out infinite;
+}
+.stage-wrap video.is-off {
+  visibility: hidden;
+  opacity: 0 !important;
 }
 @keyframes club-breathe {
   0%, 100% { filter: saturate(1) brightness(1); }
@@ -342,9 +351,25 @@ textarea { min-height: 120px; resize: vertical; }
   inset: 0;
   z-index: 2;
   pointer-events: none;
-  background:
-    linear-gradient(to bottom, rgba(5, 5, 8, 0.42) 0%, transparent 22%),
-    linear-gradient(to top, rgba(5, 5, 8, 0.72) 0%, rgba(5, 5, 8, 0.28) 28%, transparent 52%);
+  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.28) 0%, transparent 16%);
+}
+.stage-bottom-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: min(54vh, 560px);
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(5, 5, 8, 0.82) 0%,
+    rgba(5, 5, 8, 0.48) 34%,
+    rgba(5, 5, 8, 0.16) 68%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
 }
 .stage-warming {
   position: absolute;
@@ -397,11 +422,12 @@ textarea { min-height: 120px; resize: vertical; }
   align-content: center;
   gap: 8px;
   border: 0;
-  background: rgba(5, 5, 8, 0.58);
+  background: radial-gradient(ellipse 55% 42% at 50% 44%, rgba(5, 5, 8, 0.55), rgba(5, 5, 8, 0.12) 58%, transparent 74%);
   color: var(--ink);
   cursor: pointer;
   text-align: center;
   padding: 24px;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.8);
 }
 .enter-party .eyebrow {
   margin: 0;
@@ -426,19 +452,18 @@ textarea { min-height: 120px; resize: vertical; }
   display: grid;
   grid-template-columns: 280px 1fr 320px;
   gap: 8px;
-  padding: 88px 10px 12px;
-  height: min(42vh, 400px);
-  min-height: 240px;
+  padding: 8px 10px 12px;
+  height: min(34vh, 320px);
+  min-height: 220px;
   overflow: hidden;
-  background: linear-gradient(
-    to top,
-    rgba(5, 5, 8, 0.82) 0%,
-    rgba(5, 5, 8, 0.42) 48%,
-    transparent 100%
-  );
+  background: transparent;
+  pointer-events: none;
+}
+.room-body > .panel {
+  pointer-events: auto;
 }
 .panel {
-  background: rgba(10, 8, 14, 0.34);
+  background: rgba(10, 8, 14, 0.42);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 8px 10px;
@@ -447,6 +472,7 @@ textarea { min-height: 120px; resize: vertical; }
   flex-direction: column;
   overflow: hidden;
   backdrop-filter: blur(18px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
 }
 .panel h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); flex: none; }
 .panel .lede {
@@ -615,10 +641,12 @@ textarea { min-height: 120px; resize: vertical; }
   .room-body {
     grid-template-columns: 1fr;
     gap: 6px;
-    padding: 40px 6px 8px;
-    height: min(48dvh, 420px);
+    padding: 6px 6px 8px;
+    height: min(46dvh, 400px);
     overflow: auto;
+    pointer-events: auto;
   }
+  .stage-bottom-fade { height: min(58dvh, 520px); }
   .stage-wrap { max-height: none; }
   .people-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
   .cast-modal { padding: 12px; align-items: start; }

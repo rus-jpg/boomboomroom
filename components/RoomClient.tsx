@@ -255,6 +255,8 @@ export function RoomClient({
   return (
     <>
       <div className="room-shell" inert={guest || undefined}>
+      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
+      <div className="stage-bottom-fade" aria-hidden />
       <header className="room-header">
         <strong className="display">{PRODUCT_NAME}</strong>
         <div className="room-header-actions">
@@ -270,7 +272,6 @@ export function RoomClient({
           ) : null}
         </div>
       </header>
-      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
       <div className="room-body">
         <section className="panel">
           <h2>Booth queue</h2>

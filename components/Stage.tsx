@@ -255,6 +255,7 @@ export function Stage({
         playsInline
         preload="auto"
         loop={false}
+        className={op0 <= 0.02 ? "is-off" : undefined}
         onError={() => markFailed(v0Ref.current?.getAttribute("src") || currentUrl)}
         style={{ opacity: op0 }}
       />
@@ -264,6 +265,7 @@ export function Stage({
         playsInline
         preload="auto"
         loop={false}
+        className={op1 <= 0.02 ? "is-off" : undefined}
         onError={() => markFailed(v1Ref.current?.getAttribute("src") || nextUrl)}
         style={{ opacity: op1 }}
       />
