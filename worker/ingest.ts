@@ -1,4 +1,5 @@
 import { extractAudioUrl, extractDurationS, extractImageUrl, extractVideoUrl } from "@/lib/server/fal";
+import { ensureHouseJobsQueued, hydratePlayingHouseTurn } from "@/lib/server/house";
 import { isStubHouseVideo } from "@/lib/shared/media";
 import { publishRoomEvent } from "@/lib/server/queues";
 import { getJob, insertMedia, updateJob, updateParticipant, updateTurn, listJobsForTurn, getTurn } from "@/lib/server/repo";
@@ -62,6 +63,13 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
           participantId: job.participant_id,
         });
       }
+    }
+    console.log(`[house] house_clip complete ${job.id}`);
+    try {
+      await hydratePlayingHouseTurn();
+      await ensureHouseJobsQueued();
+    } catch (err) {
+      console.warn("[house] refill after complete", err);
     }
     return;
   }

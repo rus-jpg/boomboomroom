@@ -567,23 +567,99 @@ export async function listMediaByKind(kind: Media["kind"], limit = 12): Promise<
     .slice(0, limit);
 }
 
-const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
-
-/** Worker-owned claim: queued jobs Vercel never put on Redis. */
-export async function listQueuedJobs(): Promise<Job[]> {
+export async function listUnusedHouseClips(limit = 12): Promise<Media[]> {
   if (useRemote()) {
     const { data } = await supabaseAdmin()
+      .from("media_assets")
+      .select("*")
+      .eq("kind", "house_video")
+      .is("turn_id", null)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    return data ?? [];
+  }
+  return readStore()
+    .media.filter((m) => m.kind === "house_video" && m.turn_id === null)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .slice(0, limit);
+}
+
+export async function countUnusedHouseClips(): Promise<number> {
+  if (useRemote()) {
+    const { count, error } = await supabaseAdmin()
+      .from("media_assets")
+      .select("id", { count: "exact", head: true })
+      .eq("kind", "house_video")
+      .is("turn_id", null);
+    if (error) throw error;
+    return count ?? 0;
+  }
+  return readStore().media.filter((m) => m.kind === "house_video" && m.turn_id === null).length;
+}
+
+/** Mark unused house clips as consumed by this turn. FIFO playhead. */
+export async function claimUnusedHouseClips(count: number, turnId: string): Promise<Media[]> {
+  if (count <= 0) return [];
+  const unused = await listUnusedHouseClips(count);
+  const claimed: Media[] = [];
+  for (const row of unused) {
+    if (useRemote()) {
+      const { data, error } = await supabaseAdmin()
+        .from("media_assets")
+        .update({ turn_id: turnId })
+        .eq("id", row.id)
+        .eq("kind", "house_video")
+        .is("turn_id", null)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      if (data) claimed.push(data);
+    } else {
+      const store = readStore();
+      const idx = store.media.findIndex((m) => m.id === row.id && m.turn_id === null);
+      if (idx < 0) continue;
+      store.media[idx] = { ...store.media[idx], turn_id: turnId };
+      writeStore(store);
+      claimed.push(store.media[idx]);
+    }
+  }
+  return claimed;
+}
+
+const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
+
+/** Worker-owned claim: queued jobs Vercel never put on Redis. House clips first so DJ music never starves the livestream. */
+export async function listQueuedJobs(): Promise<Job[]> {
+  if (useRemote()) {
+    const house = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "queued")
+      .eq("kind", "video")
+      .is("turn_id", null)
+      .order("created_at", { ascending: true })
+      .limit(12);
+    const rest = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
       .eq("status", "queued")
       .in("kind", RECLAIM_KINDS)
       .order("created_at", { ascending: true })
       .limit(50);
-    return data ?? [];
+    const houseRows = house.data ?? [];
+    const seen = new Set(houseRows.map((job) => job.id));
+    return [...houseRows, ...(rest.data ?? []).filter((job) => !seen.has(job.id))];
   }
-  return readStore()
-    .jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind))
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const store = readStore();
+  const queued = store.jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind));
+  const house = queued.filter(isHouseVideoJob);
+  const rest = queued.filter((j) => !isHouseVideoJob(j));
+  return [...house, ...rest].sort((a, b) => {
+    const ah = isHouseVideoJob(a) ? 0 : 1;
+    const bh = isHouseVideoJob(b) ? 0 : 1;
+    if (ah !== bh) return ah - bh;
+    return a.created_at.localeCompare(b.created_at);
+  });
 }
 
 export async function listRunningFalJobs(): Promise<Job[]> {

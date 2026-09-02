@@ -4,7 +4,7 @@ import {
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
-import { ensureHouseJobsQueued, latestHouseClipKeys } from "@/lib/server/house";
+import { ensureHouseJobsQueued, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { isBanned, isBlockedText, isMuted, normalizeChat, takeToken, type RateBucket } from "@/lib/shared/moderation";
 import type { RoomState } from "@/lib/shared/types";
@@ -100,18 +100,28 @@ export class RoomEngine {
     } catch (err) {
       console.warn("[engine] house buffer enqueue", err);
     }
-    const keys = await latestHouseClipKeys(6);
     const bounds = turnBounds(Date.now());
-    await insertTurn({
+    const turn = await insertTurn({
       roomId,
       kind: "house",
       generationStatus: "playing",
       musicPrompt: "House buffer — midnight basement disco",
       audioUrl: HOUSE_AUDIO_PATH,
-      videoSegmentUrls: keys,
+      videoSegmentUrls: [],
       startsAt: bounds.startsAt,
       endsAt: bounds.endsAt,
     });
+    try {
+      const keys = await takeHouseClipKeys(6, turn.id);
+      if (keys.length) await updateTurn(turn.id, { video_segment_urls: keys });
+    } catch (err) {
+      console.warn("[engine] house clip claim", err);
+    }
+    try {
+      await ensureHouseJobsQueued();
+    } catch (err) {
+      console.warn("[engine] house buffer refill", err);
+    }
     await insertChat({
       roomId,
       participantId: null,

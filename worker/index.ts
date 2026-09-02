@@ -3,23 +3,19 @@ import { createServer } from "node:http";
 import Redis from "ioredis";
 import { QUEUES } from "@/lib/shared/constants";
 import { isMockMode, redisUrl } from "@/lib/server/env";
-import { ensureHouseJobsQueued, latestHouseClipKeys } from "@/lib/server/house";
+import { ensureHouseJobsQueued, hydratePlayingHouseTurn, isHouseJob } from "@/lib/server/house";
 import { pollFalQueue, submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
 import { publishRoomEvent } from "@/lib/server/queues";
-import { isPlayableVideoUrl, isStubHouseVideo } from "@/lib/shared/media";
 import {
   claimQueuedJob,
   getJob,
   getParticipant,
-  getRoomBySlug,
   insertMedia,
-  latestPlayingTurn,
   listGeneratingTurns,
   listQueuedJobs,
   listRunningFalJobs,
   updateJob,
   updateParticipant,
-  updateTurn,
 } from "@/lib/server/repo";
 import { redisConnection } from "@/lib/server/redis";
 import { signedUrl, uploadBytes } from "@/lib/server/storage";
@@ -29,9 +25,10 @@ import { mockCharacterJpeg } from "./mock";
 const RECLAIM_MS = 12_000;
 const FACE_SIGNED_TTL_S = 60 * 60 * 24;
 
-function asStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
-  return [];
+function houseFirst<T extends { kind: string; payload: unknown }>(jobs: T[]): T[] {
+  const house = jobs.filter((job) => isHouseJob(job));
+  const rest = jobs.filter((job) => !isHouseJob(job));
+  return [...house, ...rest];
 }
 
 async function takeQueued(jobId: string) {
@@ -127,6 +124,9 @@ async function handleVideo(jobId: string) {
     jobId: job.id,
   });
   await updateJob(job.id, { fal_request_id: submitted.requestId });
+  if (isHouse) {
+    console.log(`[worker] house_clip submit ${job.id} fal=${submitted.requestId} mock=${submitted.mock}`);
+  }
   if (submitted.mock) {
     await updateJob(job.id, {
       status: "complete",
@@ -142,7 +142,7 @@ async function handleFinalize(turnId: string) {
 }
 
 async function reclaimQueuedJobs() {
-  const jobs = await listQueuedJobs();
+  const jobs = houseFirst(await listQueuedJobs());
   if (!jobs.length) return;
   console.log(`[worker] reclaiming ${jobs.length} queued job(s)`);
   for (const job of jobs) {
@@ -157,13 +157,13 @@ async function reclaimQueuedJobs() {
 }
 
 async function pollRunningFalJobs() {
-  const jobs = await listRunningFalJobs();
+  const jobs = houseFirst(await listRunningFalJobs());
   if (!jobs.length) return;
   for (const job of jobs) {
     try {
       const done = await pollFalQueue(job);
       if (!done) continue;
-      console.log(`[worker] fal ${job.id} ${done.status}`);
+      console.log(`[worker] fal ${job.id} ${done.status}${isHouseJob(job) ? " house_clip" : ""}`);
       await ingestFalWebhook(job.id, done.payload, done.status);
     } catch (err) {
       console.error(`[worker] fal poll ${job.id}`, err);
@@ -182,26 +182,11 @@ async function finalizeGeneratingTurns() {
   }
 }
 
-/** If the playing house turn is empty/stubs, attach ready H3 Max keys. Never swap a healthy 6-clip set mid-turn. */
-async function hydratePlayingHouseTurn() {
-  const room = await getRoomBySlug();
-  const playing = await latestPlayingTurn(room.id);
-  if (!playing || playing.kind !== "house") return;
-  const keys = await latestHouseClipKeys(6);
-  if (!keys.length) return;
-  const current = asStringArray(playing.video_segment_urls);
-  const playable = current.filter((url) => isPlayableVideoUrl(url));
-  if (playable.length >= keys.length) return;
-  const needsFill = current.length === 0 || current.every((url) => isStubHouseVideo(url)) || playable.length < keys.length;
-  if (!needsFill) return;
-  await updateTurn(playing.id, { video_segment_urls: keys });
-  await publishRoomEvent({ type: "house-hydrated", turnId: playing.id });
-}
-
+/** House livestream is independent of DJ music jobs. */
 async function ensureHouseLivestream() {
   try {
     const spawned = await ensureHouseJobsQueued();
-    if (spawned) console.log(`[worker] queued ${spawned} H3 Max house clip(s)`);
+    if (spawned) console.log(`[worker] queued ${spawned} house_clip job(s)`);
     await hydratePlayingHouseTurn();
   } catch (err) {
     console.error("[worker] house livestream", err);
@@ -209,10 +194,10 @@ async function ensureHouseLivestream() {
 }
 
 async function tick() {
+  await ensureHouseLivestream();
   await reclaimQueuedJobs();
   await pollRunningFalJobs();
   await finalizeGeneratingTurns();
-  await ensureHouseLivestream();
 }
 
 async function main() {
@@ -249,11 +234,12 @@ async function main() {
         console.error("[worker] webhook ingest", err);
       }
     });
-    console.log(`[worker] Boom Boom Room workers online (mock=${isMockMode()})`);
+    console.log(`[worker] house livestream loop on (mock=${isMockMode()})`);
   } else {
     console.log("[worker] REDIS_URL missing — DB claim loop only (no BullMQ)");
   }
 
+  console.log("[worker] bootstrapping house_clip buffer");
   await tick();
   setInterval(() => {
     void tick();

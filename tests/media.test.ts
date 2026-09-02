@@ -22,4 +22,11 @@ describe("house clip prompt", () => {
     expect(prompt).toMatch(/16:9/);
     expect(prompt).toMatch(/768P/);
   });
+
+  it("rotates camera and mood so the auto-prompter stays fresh", () => {
+    const a = houseClipPrompt(0);
+    const b = houseClipPrompt(7);
+    expect(a).not.toBe(b);
+    expect(b).toMatch(/neon sweat|fog and lasers|crowd silhouettes|DJ booth|wet concrete|strobe|basement/i);
+  });
 });
