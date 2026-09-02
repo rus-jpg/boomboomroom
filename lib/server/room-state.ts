@@ -1,5 +1,6 @@
-import { CLIP_COUNT, HOUSE_AUDIO_PATH, HOUSE_VIDEO_PATHS, MAX_PARTICIPANTS } from "@/lib/shared/constants";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
+import { isPlayableVideoUrl } from "@/lib/shared/media";
 import { isMuted } from "@/lib/shared/moderation";
 import type { ChatMessageView, PublicParticipant, QueueEntryView, RoomState, TurnView, VideoSegment } from "@/lib/shared/types";
 import { isMockMode } from "./env";
@@ -45,19 +46,30 @@ function asStringArray(value: unknown): string[] {
   return [];
 }
 
+function emptySegments(): VideoSegment[] {
+  return Array.from({ length: CLIP_COUNT }, () => ({
+    url: "",
+    participantId: null,
+    displayName: null,
+  }));
+}
+
 async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): Promise<TurnView | null> {
   if (!turn) return null;
   const dj = turn.dj_participant_id ? await getParticipant(turn.dj_participant_id) : null;
-  const rawVideos = asStringArray(turn.video_segment_urls);
-  const videos = rawVideos.length ? rawVideos : [...HOUSE_VIDEO_PATHS];
+  const rawVideos = asStringArray(turn.video_segment_urls).filter((url) => isPlayableVideoUrl(url));
   const segments: VideoSegment[] = [];
-  for (let i = 0; i < CLIP_COUNT; i++) {
-    const url = await resolveUrl(videos[i] ?? HOUSE_VIDEO_PATHS[i % HOUSE_VIDEO_PATHS.length]);
-    segments.push({
-      url: url ?? HOUSE_VIDEO_PATHS[i % HOUSE_VIDEO_PATHS.length],
-      participantId: null,
-      displayName: null,
-    });
+  if (rawVideos.length === 0) {
+    segments.push(...emptySegments());
+  } else {
+    for (let i = 0; i < CLIP_COUNT; i++) {
+      const resolved = await resolveUrl(rawVideos[i % rawVideos.length]);
+      segments.push({
+        url: resolved ?? "",
+        participantId: null,
+        displayName: null,
+      });
+    }
   }
   return {
     id: turn.id,
@@ -133,11 +145,7 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     generationStatus: "playing" as const,
     musicPrompt: "House buffer — midnight basement disco",
     audioUrl: HOUSE_AUDIO_PATH,
-    videoSegments: HOUSE_VIDEO_PATHS.map((url) => ({
-      url,
-      participantId: null,
-      displayName: null,
-    })),
+    videoSegments: emptySegments(),
     startsAt: new Date(Math.floor(Date.now() / 60_000) * 60_000).toISOString(),
     endsAt: new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString(),
     dj: null,

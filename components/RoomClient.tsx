@@ -3,7 +3,7 @@
 import { io, type Socket } from "socket.io-client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HOUSE_AUDIO_PATH, HOUSE_VIDEO_PATHS, PRODUCT_NAME } from "@/lib/shared/constants";
+import { HOUSE_AUDIO_PATH, PRODUCT_NAME } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { Stage } from "./Stage";
@@ -45,7 +45,7 @@ function demoState(name: string): RoomState {
       generationStatus: "playing",
       musicPrompt: "House buffer",
       audioUrl: HOUSE_AUDIO_PATH,
-      videoSegments: HOUSE_VIDEO_PATHS.map((url) => ({ url, participantId: null, displayName: null })),
+      videoSegments: Array.from({ length: 6 }, () => ({ url: "", participantId: null, displayName: null })),
       startsAt: new Date(start).toISOString(),
       endsAt: new Date(start + 60_000).toISOString(),
       dj: null,

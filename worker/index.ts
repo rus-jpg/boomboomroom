@@ -3,17 +3,23 @@ import { createServer } from "node:http";
 import Redis from "ioredis";
 import { QUEUES } from "@/lib/shared/constants";
 import { isMockMode, redisUrl } from "@/lib/server/env";
+import { ensureHouseJobsQueued, latestHouseClipKeys } from "@/lib/server/house";
 import { pollFalQueue, submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
-import { enqueueFinalize, publishRoomEvent } from "@/lib/server/queues";
+import { publishRoomEvent } from "@/lib/server/queues";
+import { isPlayableVideoUrl, isStubHouseVideo } from "@/lib/shared/media";
 import {
   claimQueuedJob,
   getJob,
   getParticipant,
+  getRoomBySlug,
   insertMedia,
+  latestPlayingTurn,
+  listGeneratingTurns,
   listQueuedJobs,
   listRunningFalJobs,
   updateJob,
   updateParticipant,
+  updateTurn,
 } from "@/lib/server/repo";
 import { redisConnection } from "@/lib/server/redis";
 import { signedUrl, uploadBytes } from "@/lib/server/storage";
@@ -22,6 +28,11 @@ import { mockCharacterJpeg } from "./mock";
 
 const RECLAIM_MS = 12_000;
 const FACE_SIGNED_TTL_S = 60 * 60 * 24;
+
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  return [];
+}
 
 async function takeQueued(jobId: string) {
   const current = await getJob(jobId);
@@ -90,18 +101,22 @@ async function handleMusic(jobId: string) {
       completed_at: new Date().toISOString(),
       result: { mock: true, audio: { url: "/house/house-audio.mp3" }, duration: 60 },
     });
-    await enqueueFinalize(job.turn_id);
+    await finalizeTurn(job.turn_id);
   }
 }
 
 async function handleVideo(jobId: string) {
   const job = await takeQueued(jobId);
-  if (!job || !job.turn_id) return;
+  if (!job) return;
   const payload = (job.payload ?? {}) as {
+    house?: boolean;
     clipIndex?: number;
     prompt?: string;
     referenceImageUrl?: string | null;
   };
+  const isHouse = payload.house === true;
+  if (!isHouse && !job.turn_id) return;
+
   let ref = payload.referenceImageUrl ?? null;
   if (ref && !ref.startsWith("http") && !ref.startsWith("/")) {
     ref = (await signedUrl(ref, FACE_SIGNED_TTL_S)) || ref;
@@ -113,13 +128,12 @@ async function handleVideo(jobId: string) {
   });
   await updateJob(job.id, { fal_request_id: submitted.requestId });
   if (submitted.mock) {
-    const clip = ((payload.clipIndex ?? 0) % 6) + 1;
     await updateJob(job.id, {
       status: "complete",
       completed_at: new Date().toISOString(),
-      result: { mock: true, video: { url: `/house/house-0${clip}.mp4` }, clipIndex: payload.clipIndex ?? 0 },
+      result: { mock: true, house: isHouse, clipIndex: payload.clipIndex ?? 0 },
     });
-    await enqueueFinalize(job.turn_id);
+    if (!isHouse && job.turn_id) await finalizeTurn(job.turn_id);
   }
 }
 
@@ -157,9 +171,48 @@ async function pollRunningFalJobs() {
   }
 }
 
+async function finalizeGeneratingTurns() {
+  const turns = await listGeneratingTurns();
+  for (const turn of turns) {
+    try {
+      await finalizeTurn(turn.id);
+    } catch (err) {
+      console.error(`[worker] finalize ${turn.id}`, err);
+    }
+  }
+}
+
+/** If the playing house turn is empty/stubs, attach ready H3 Max keys. Never swap a healthy 6-clip set mid-turn. */
+async function hydratePlayingHouseTurn() {
+  const room = await getRoomBySlug();
+  const playing = await latestPlayingTurn(room.id);
+  if (!playing || playing.kind !== "house") return;
+  const keys = await latestHouseClipKeys(6);
+  if (!keys.length) return;
+  const current = asStringArray(playing.video_segment_urls);
+  const playable = current.filter((url) => isPlayableVideoUrl(url));
+  if (playable.length >= keys.length) return;
+  const needsFill = current.length === 0 || current.every((url) => isStubHouseVideo(url)) || playable.length < keys.length;
+  if (!needsFill) return;
+  await updateTurn(playing.id, { video_segment_urls: keys });
+  await publishRoomEvent({ type: "house-hydrated", turnId: playing.id });
+}
+
+async function ensureHouseLivestream() {
+  try {
+    const spawned = await ensureHouseJobsQueued();
+    if (spawned) console.log(`[worker] queued ${spawned} H3 Max house clip(s)`);
+    await hydratePlayingHouseTurn();
+  } catch (err) {
+    console.error("[worker] house livestream", err);
+  }
+}
+
 async function tick() {
   await reclaimQueuedJobs();
   await pollRunningFalJobs();
+  await finalizeGeneratingTurns();
+  await ensureHouseLivestream();
 }
 
 async function main() {

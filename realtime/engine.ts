@@ -1,10 +1,10 @@
 import {
   COMPOSE_WINDOW_MS,
   HOUSE_AUDIO_PATH,
-  HOUSE_VIDEO_PATHS,
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
+import { ensureHouseJobsQueued, latestHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { isBanned, isBlockedText, isMuted, normalizeChat, takeToken, type RateBucket } from "@/lib/shared/moderation";
 import type { RoomState } from "@/lib/shared/types";
@@ -95,6 +95,12 @@ export class RoomEngine {
   }
 
   private async startHouse(roomId: string) {
+    try {
+      await ensureHouseJobsQueued();
+    } catch (err) {
+      console.warn("[engine] house buffer enqueue", err);
+    }
+    const keys = await latestHouseClipKeys(6);
     const bounds = turnBounds(Date.now());
     await insertTurn({
       roomId,
@@ -102,7 +108,7 @@ export class RoomEngine {
       generationStatus: "playing",
       musicPrompt: "House buffer — midnight basement disco",
       audioUrl: HOUSE_AUDIO_PATH,
-      videoSegmentUrls: [...HOUSE_VIDEO_PATHS],
+      videoSegmentUrls: keys,
       startsAt: bounds.startsAt,
       endsAt: bounds.endsAt,
     });
@@ -269,7 +275,7 @@ export class RoomEngine {
     await updateTurn(turnId, {
       generation_status: "ready",
       audio_url: HOUSE_AUDIO_PATH,
-      video_segment_urls: [...HOUSE_VIDEO_PATHS],
+      video_segment_urls: [],
       music_prompt: prompt,
     });
   }

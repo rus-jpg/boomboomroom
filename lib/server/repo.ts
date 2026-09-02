@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { CLIP_COUNT, HOUSE_AUDIO_PATH, HOUSE_VIDEO_PATHS, ROOM_SLUG } from "@/lib/shared/constants";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH, ROOM_SLUG } from "@/lib/shared/constants";
 import type { Database, Json } from "@/lib/shared/database.types";
 import { hasSupabaseAdmin } from "./env";
 import { supabaseAdmin } from "./supabase";
@@ -518,6 +518,55 @@ export async function listJobsForTurn(turnId: string): Promise<Job[]> {
   return readStore().jobs.filter((j) => j.turn_id === turnId);
 }
 
+export async function listGeneratingTurns(): Promise<Turn[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("turns")
+      .select("*")
+      .eq("generation_status", "generating")
+      .order("created_at", { ascending: true })
+      .limit(20);
+    return data ?? [];
+  }
+  return readStore().turns.filter((t) => t.generation_status === "generating");
+}
+
+function isHouseVideoJob(job: Job): boolean {
+  const payload = job.payload as { house?: boolean } | null;
+  return job.kind === "video" && job.turn_id === null && payload?.house === true;
+}
+
+export async function listInflightHouseVideoJobs(): Promise<Job[]> {
+  const inflight = (status: Job["status"]) => status === "queued" || status === "running";
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("kind", "video")
+      .in("status", ["queued", "running"])
+      .is("turn_id", null)
+      .limit(50);
+    return (data ?? []).filter(isHouseVideoJob);
+  }
+  return readStore().jobs.filter((j) => inflight(j.status) && isHouseVideoJob(j));
+}
+
+export async function listMediaByKind(kind: Media["kind"], limit = 12): Promise<Media[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("media_assets")
+      .select("*")
+      .eq("kind", kind)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    return data ?? [];
+  }
+  return readStore()
+    .media.filter((m) => m.kind === kind)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit);
+}
+
 const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
 
 /** Worker-owned claim: queued jobs Vercel never put on Redis. */
@@ -640,7 +689,7 @@ export function houseTurnTemplate(roomId: string): Omit<Turn, "id" | "created_at
     starts_at: null,
     ends_at: null,
     audio_url: HOUSE_AUDIO_PATH,
-    video_segment_urls: [...HOUSE_VIDEO_PATHS],
+    video_segment_urls: [],
     generation_status: "ready",
   };
 }

@@ -1,60 +1,228 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { CROSSFADE_MS } from "@/lib/shared/constants";
-import { shouldCorrectAudio } from "@/lib/shared/clock";
+import { useEffect, useRef, useState } from "react";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH } from "@/lib/shared/constants";
+import { clockFromStart, crossfadeProgress, shouldCorrectAudio } from "@/lib/shared/clock";
+import { PLAYBACK_DRIFT_MS, isStubHouseVideo } from "@/lib/shared/media";
 import type { ClockSnapshot, TurnView } from "@/lib/shared/types";
+
+function sameSrc(el: HTMLVideoElement, url: string): boolean {
+  if (!url) return false;
+  if (el.getAttribute("src") === url) return true;
+  try {
+    return el.currentSrc === url || el.src === new URL(url, window.location.origin).href;
+  } catch {
+    return el.src === url;
+  }
+}
 
 export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnapshot }) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const aRef = useRef<HTMLVideoElement>(null);
-  const bRef = useRef<HTMLVideoElement>(null);
-  const lastUrl = useRef<string | null>(null);
+  const v0Ref = useRef<HTMLVideoElement>(null);
+  const v1Ref = useRef<HTMLVideoElement>(null);
+  const lastAudioUrl = useRef<string | null>(null);
+  const frontIs0Ref = useRef(true);
+  const primedTurnRef = useRef<string | null>(null);
+  const primedIndexRef = useRef<number | null>(null);
+  const nextReadyRef = useRef(false);
+  const fadeStartedRef = useRef(false);
+  const clockRef = useRef(clock);
+  const urlsRef = useRef({ currentUrl: "", nextUrl: "" });
+  const [fade, setFade] = useState(0);
+  const [frontIs0, setFrontIs0] = useState(true);
+  const [playIndex, setPlayIndex] = useState(clock.clipIndex);
+  const failedUrlsRef = useRef(new Set<string>());
+  const [, setFailedTick] = useState(0);
+
+  clockRef.current = clock;
+  frontIs0Ref.current = frontIs0;
 
   const clips = turn?.videoSegments ?? [];
-  const audioUrl = turn?.audioUrl ?? "/house/house-audio.mp3";
-  const clipA = clips[clock.clipIndex]?.url ?? "/house/house-01.mp4";
-  const clipB = clips[clock.nextClipIndex]?.url ?? clipA;
+  const audioUrl = turn?.audioUrl || HOUSE_AUDIO_PATH;
+  const clipIndex = playIndex;
+  const nextClipIndex = clipIndex < CLIP_COUNT - 1 ? clipIndex + 1 : clipIndex;
+  const currentUrl = clips[clipIndex]?.url ?? "";
+  const nextUrl = clips[nextClipIndex]?.url ?? "";
+  urlsRef.current = { currentUrl, nextUrl };
+  const stubCurrent = isStubHouseVideo(currentUrl);
+  const warming = stubCurrent || failedUrlsRef.current.has(currentUrl);
+
+  function markFailed(url: string) {
+    if (!url || failedUrlsRef.current.has(url)) return;
+    failedUrlsRef.current.add(url);
+    setFailedTick((n) => n + 1);
+  }
+
+  useEffect(() => {
+    primedTurnRef.current = null;
+    primedIndexRef.current = null;
+    nextReadyRef.current = false;
+    fadeStartedRef.current = false;
+    setPlayIndex(clockRef.current.clipIndex);
+    setFade(0);
+  }, [turn?.id]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (lastUrl.current !== audioUrl) {
-      lastUrl.current = audioUrl;
+    if (lastAudioUrl.current !== audioUrl) {
+      lastAudioUrl.current = audioUrl;
       audio.src = audioUrl;
     }
-    const target = clock.audioOffsetMs / 1000;
-    if (Number.isFinite(target)) {
-      const drift = Math.round((audio.currentTime - target) * 1000);
-      if (shouldCorrectAudio(drift)) audio.currentTime = Math.max(0, target);
-    }
-    if (audio.paused) void audio.play().catch(() => undefined);
-  }, [audioUrl, clock.audioOffsetMs, clock.serverNow]);
+    void audio.play().catch(() => undefined);
+  }, [audioUrl]);
 
   useEffect(() => {
-    const a = aRef.current;
-    const b = bRef.current;
-    if (!a || !b) return;
-    if (a.src !== new URL(clipA, window.location.origin).href && a.getAttribute("src") !== clipA) {
-      a.src = clipA;
-    }
-    if (b.getAttribute("src") !== clipB) b.src = clipB;
-    const aTime = clock.clipOffsetMs / 1000;
-    if (Math.abs(a.currentTime - aTime) > 0.25) a.currentTime = Math.max(0, aTime);
-    if (clock.crossfading) {
-      if (Math.abs(b.currentTime) > 0.35) b.currentTime = 0;
-      void b.play().catch(() => undefined);
-    }
-    void a.play().catch(() => undefined);
-  }, [clipA, clipB, clock.clipIndex, clock.clipOffsetMs, clock.crossfading]);
+    if (stubCurrent) return;
+    const v0 = v0Ref.current;
+    const v1 = v1Ref.current;
+    if (!v0 || !v1 || !currentUrl) return;
 
-  const fade = clock.crossfading ? 1 : 0;
+    const turnId = turn?.id ?? "";
+    const isNewTurn = primedTurnRef.current !== turnId;
+    const isNewClip = primedIndexRef.current !== clipIndex;
+
+    const preloadBack = (back: HTMLVideoElement) => {
+      if (!nextUrl || nextUrl === currentUrl || isStubHouseVideo(nextUrl)) return;
+      if (sameSrc(back, nextUrl)) {
+        if (back.readyState >= 3) nextReadyRef.current = true;
+        return;
+      }
+      nextReadyRef.current = false;
+      back.pause();
+      back.src = nextUrl;
+      back.addEventListener(
+        "canplay",
+        () => {
+          nextReadyRef.current = true;
+        },
+        { once: true },
+      );
+    };
+
+    if (!isNewTurn && !isNewClip) {
+      preloadBack(frontIs0Ref.current ? v1 : v0);
+      return;
+    }
+
+    const on0 = sameSrc(v0, currentUrl);
+    const on1 = sameSrc(v1, currentUrl);
+    let front = frontIs0Ref.current ? v0 : v1;
+    let back = frontIs0Ref.current ? v1 : v0;
+    if (on1 && !on0) {
+      front = v1;
+      back = v0;
+      setFrontIs0(false);
+    } else if (on0) {
+      front = v0;
+      back = v1;
+      setFrontIs0(true);
+    } else if (!sameSrc(front, currentUrl)) {
+      front.src = currentUrl;
+    }
+
+    const joinOffset = isNewTurn ? Math.max(0, clockRef.current.clipOffsetMs / 1000) : 0;
+    const reusedPreload = (on0 || on1) && !isNewTurn;
+    const startFront = () => {
+      if (!reusedPreload) {
+        if (Math.abs(front.currentTime - joinOffset) > 0.08) front.currentTime = joinOffset;
+      }
+      void front.play().catch(() => undefined);
+    };
+    if (front.readyState >= 1) startFront();
+    else front.addEventListener("loadedmetadata", startFront, { once: true });
+
+    preloadBack(back);
+    primedTurnRef.current = turnId;
+    primedIndexRef.current = clipIndex;
+  }, [currentUrl, nextUrl, clipIndex, stubCurrent, turn?.id]);
+
+  useEffect(() => {
+    const startsAt = turn?.startsAt ? new Date(turn.startsAt).getTime() : Date.now();
+    let raf = 0;
+    const loop = () => {
+      const { currentUrl: liveUrl, nextUrl: liveNext } = urlsRef.current;
+      const local = clockFromStart(startsAt, Date.now());
+      const canFade =
+        local.crossfading &&
+        nextReadyRef.current &&
+        Boolean(liveNext) &&
+        liveNext !== liveUrl &&
+        !isStubHouseVideo(liveNext);
+      const progress = canFade ? crossfadeProgress(local.clipOffsetMs) : 0;
+      setFade((prev) => (Math.abs(prev - progress) < 0.02 ? prev : progress));
+      setPlayIndex((i) => (i === local.clipIndex ? i : local.clipIndex));
+
+      const v0 = v0Ref.current;
+      const v1 = v1Ref.current;
+      const front = frontIs0Ref.current ? v0 : v1;
+      const back = frontIs0Ref.current ? v1 : v0;
+
+      if (front && !isStubHouseVideo(liveUrl) && front.readyState >= 2) {
+        const expected = local.clipOffsetMs / 1000;
+        if (Number.isFinite(front.currentTime) && Math.abs(front.currentTime - expected) * 1000 > PLAYBACK_DRIFT_MS) {
+          front.currentTime = Math.max(0, expected);
+        }
+        if (front.paused) void front.play().catch(() => undefined);
+      }
+
+      if (canFade && back) {
+        if (!fadeStartedRef.current) {
+          fadeStartedRef.current = true;
+          if (back.currentTime > 0.15) back.currentTime = 0;
+          void back.play().catch(() => undefined);
+        } else if (back.paused) {
+          void back.play().catch(() => undefined);
+        }
+      } else if (!local.crossfading) {
+        fadeStartedRef.current = false;
+      }
+
+      const audio = audioRef.current;
+      if (audio && audio.readyState >= 2) {
+        const target = local.audioOffsetMs / 1000;
+        const drift = Math.round((audio.currentTime - target) * 1000);
+        if (Number.isFinite(audio.currentTime) && shouldCorrectAudio(drift, PLAYBACK_DRIFT_MS)) {
+          audio.currentTime = Math.max(0, target);
+        }
+        if (audio.paused) void audio.play().catch(() => undefined);
+      }
+
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [turn?.id, turn?.startsAt]);
+
+  const op0 = warming ? 0 : frontIs0 ? 1 - fade : fade;
+  const op1 = warming ? 0 : frontIs0 ? fade : 1 - fade;
 
   return (
     <div className="stage-wrap">
-      <video ref={aRef} muted playsInline loop={false} style={{ opacity: 1 - fade, transition: `opacity ${CROSSFADE_MS}ms linear` }} />
-      <video ref={bRef} muted playsInline loop={false} style={{ opacity: fade, transition: `opacity ${CROSSFADE_MS}ms linear` }} />
+      <video
+        ref={v0Ref}
+        muted
+        playsInline
+        preload="auto"
+        loop={false}
+        onError={() => markFailed(v0Ref.current?.getAttribute("src") || currentUrl)}
+        style={{ opacity: op0 }}
+      />
+      <video
+        ref={v1Ref}
+        muted
+        playsInline
+        preload="auto"
+        loop={false}
+        onError={() => markFailed(v1Ref.current?.getAttribute("src") || nextUrl)}
+        style={{ opacity: op1 }}
+      />
       <div className="stage-fallback" aria-hidden />
+      {warming ? (
+        <div className="stage-warming" role="status">
+          warming livestream
+        </div>
+      ) : null}
       <audio ref={audioRef} preload="auto" loop />
       <div className="hud">
         <div className="pill now-playing">
@@ -63,7 +231,7 @@ export function Stage({ turn, clock }: { turn: TurnView | null; clock: ClockSnap
             : "House buffer · midnight basement disco"}
         </div>
         <div className="pill">
-          {String(1 + clock.clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
+          {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
         </div>
       </div>
     </div>
