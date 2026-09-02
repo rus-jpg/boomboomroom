@@ -16,6 +16,8 @@ export const metadata: Metadata = {
     title,
     description,
     url: "/room",
+    siteName: "Boom Boom Room",
+    type: "website",
     images: [
       {
         url: "/og.png",
