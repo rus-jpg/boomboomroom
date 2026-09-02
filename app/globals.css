@@ -130,14 +130,16 @@ textarea { min-height: 120px; resize: vertical; }
 
 .room-shell {
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  min-height: 100dvh;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
   background: #050508;
 }
 .stage-wrap {
   position: relative;
   aspect-ratio: 16 / 9;
-  max-height: min(58vh, 720px);
+  max-height: min(42vh, 520px);
   width: 100%;
   background: #000;
   overflow: hidden;
@@ -202,16 +204,27 @@ textarea { min-height: 120px; resize: vertical; }
   grid-template-columns: 280px 1fr 320px;
   gap: 12px;
   padding: 12px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .panel {
   background: var(--glass);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 14px;
-  min-height: 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   backdrop-filter: blur(16px);
 }
-.panel h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); }
+.panel h2 { margin: 0 0 10px; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); flex: none; }
+.panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .queue-item, .person, .chat-line {
   display: flex;
   gap: 10px;
@@ -227,8 +240,25 @@ textarea { min-height: 120px; resize: vertical; }
   background: #2a1620;
   flex: none;
 }
-.chat-log { height: 280px; overflow: auto; }
-.chat-form { display: flex; gap: 8px; margin-top: 8px; }
+.badge-resident {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  border: 1px solid rgba(94, 231, 255, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+  vertical-align: middle;
+}
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  overflow: auto;
+}
+.chat-form { display: flex; gap: 8px; margin-top: 8px; flex: none; }
 .chat-form input { flex: 1; }
 .chat-form button, .panel button {
   background: var(--hot);
@@ -236,6 +266,7 @@ textarea { min-height: 120px; resize: vertical; }
   border: 0;
   border-radius: 10px;
   padding: 10px 14px;
+  flex: none;
 }
 .panel button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
 
@@ -269,5 +300,5 @@ textarea { min-height: 120px; resize: vertical; }
   .cast { grid-template-columns: 1fr; }
   .cast-copy { padding: 28px 20px 12px; }
   .room-body { grid-template-columns: 1fr; }
-  .stage-wrap { max-height: 42vh; }
+  .stage-wrap { max-height: min(36vh, 420px); }
 }

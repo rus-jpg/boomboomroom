@@ -123,6 +123,30 @@ export async function listReadyParticipants(): Promise<Participant[]> {
   return readStore().participants.filter((p) => p.status === "ready");
 }
 
+export async function listResidents(): Promise<Participant[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin().from("participants").select("*").eq("is_resident", true).order("joined_at", { ascending: true });
+    return data ?? [];
+  }
+  return readStore().participants.filter((p) => p.is_resident);
+}
+
+export async function hasInflightCharacterJob(participantId: string): Promise<boolean> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("id")
+      .eq("participant_id", participantId)
+      .eq("kind", "character")
+      .in("status", ["queued", "running"])
+      .limit(1);
+    return Boolean(data?.length);
+  }
+  return readStore().jobs.some(
+    (j) => j.participant_id === participantId && j.kind === "character" && (j.status === "queued" || j.status === "running"),
+  );
+}
+
 export async function createParticipant(input: {
   sessionHash: string;
   displayName: string;
@@ -143,10 +167,50 @@ export async function createParticipant(input: {
     banned_until: null,
     joined_at: nowIso(),
     last_seen_at: nowIso(),
+    is_resident: false,
   };
   if (useRemote()) {
     const { data, error } = await supabaseAdmin().from("participants").insert(row).select("*").single();
     if (error || !data) throw error ?? new Error("insert participant failed");
+    return data;
+  }
+  const store = readStore();
+  store.participants.push(row);
+  writeStore(store);
+  return row;
+}
+
+export async function createResident(input: {
+  sessionHash: string;
+  displayName: string;
+  characterPrompt: string;
+}): Promise<Participant> {
+  const existing = await getParticipantBySessionHash(input.sessionHash);
+  if (existing) {
+    if (!existing.is_resident) {
+      return updateParticipant(existing.id, { is_resident: true, regenerate_used: true });
+    }
+    return existing;
+  }
+  const row: Participant = {
+    id: randomUUID(),
+    session_token_hash: input.sessionHash,
+    display_name: input.displayName,
+    character_prompt: input.characterPrompt,
+    original_face_url: null,
+    character_reference_url: null,
+    status: "processing",
+    regenerate_used: true,
+    ip_hash: null,
+    muted_until: null,
+    banned_until: null,
+    joined_at: nowIso(),
+    last_seen_at: nowIso(),
+    is_resident: true,
+  };
+  if (useRemote()) {
+    const { data, error } = await supabaseAdmin().from("participants").insert(row).select("*").single();
+    if (error || !data) throw error ?? new Error("resident insert failed");
     return data;
   }
   const store = readStore();
@@ -531,9 +595,12 @@ export async function listGeneratingTurns(): Promise<Turn[]> {
   return readStore().turns.filter((t) => t.generation_status === "generating");
 }
 
+function isHousePayloadJob(job: Job): boolean {
+  return (job.payload as { house?: boolean } | null)?.house === true;
+}
+
 function isHouseVideoJob(job: Job): boolean {
-  const payload = job.payload as { house?: boolean } | null;
-  return job.kind === "video" && job.turn_id === null && payload?.house === true;
+  return job.kind === "video" && job.turn_id === null && isHousePayloadJob(job);
 }
 
 export async function listInflightHouseVideoJobs(): Promise<Job[]> {
@@ -626,12 +693,85 @@ export async function claimUnusedHouseClips(count: number, turnId: string): Prom
   return claimed;
 }
 
+export async function listUnusedHouseAudio(limit = 8): Promise<Media[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("media_assets")
+      .select("*")
+      .eq("kind", "house_audio")
+      .is("turn_id", null)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+    return data ?? [];
+  }
+  return readStore()
+    .media.filter((m) => m.kind === "house_audio" && m.turn_id === null)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .slice(0, limit);
+}
+
+export async function countUnusedHouseAudio(): Promise<number> {
+  if (useRemote()) {
+    const { count, error } = await supabaseAdmin()
+      .from("media_assets")
+      .select("id", { count: "exact", head: true })
+      .eq("kind", "house_audio")
+      .is("turn_id", null);
+    if (error) throw error;
+    return count ?? 0;
+  }
+  return readStore().media.filter((m) => m.kind === "house_audio" && m.turn_id === null).length;
+}
+
+export async function claimUnusedHouseAudio(count: number, turnId: string): Promise<Media[]> {
+  if (count <= 0) return [];
+  const unused = await listUnusedHouseAudio(count);
+  const claimed: Media[] = [];
+  for (const row of unused) {
+    if (useRemote()) {
+      const { data, error } = await supabaseAdmin()
+        .from("media_assets")
+        .update({ turn_id: turnId })
+        .eq("id", row.id)
+        .eq("kind", "house_audio")
+        .is("turn_id", null)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      if (data) claimed.push(data);
+    } else {
+      const store = readStore();
+      const idx = store.media.findIndex((m) => m.id === row.id && m.turn_id === null);
+      if (idx < 0) continue;
+      store.media[idx] = { ...store.media[idx], turn_id: turnId };
+      writeStore(store);
+      claimed.push(store.media[idx]);
+    }
+  }
+  return claimed;
+}
+
+export async function listInflightHouseMusicJobs(): Promise<Job[]> {
+  const inflight = (status: Job["status"]) => status === "queued" || status === "running";
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("kind", "music")
+      .in("status", ["queued", "running"])
+      .is("turn_id", null)
+      .limit(20);
+    return (data ?? []).filter(isHousePayloadJob);
+  }
+  return readStore().jobs.filter((j) => j.kind === "music" && inflight(j.status) && isHousePayloadJob(j));
+}
+
 const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
 
 /** Worker-owned claim: queued jobs Vercel never put on Redis. House clips first so DJ music never starves the livestream. */
 export async function listQueuedJobs(): Promise<Job[]> {
   if (useRemote()) {
-    const house = await supabaseAdmin()
+    const houseVideo = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
       .eq("status", "queued")
@@ -639,6 +779,14 @@ export async function listQueuedJobs(): Promise<Job[]> {
       .is("turn_id", null)
       .order("created_at", { ascending: true })
       .limit(12);
+    const houseMusic = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "queued")
+      .eq("kind", "music")
+      .is("turn_id", null)
+      .order("created_at", { ascending: true })
+      .limit(8);
     const rest = await supabaseAdmin()
       .from("generation_jobs")
       .select("*")
@@ -646,17 +794,17 @@ export async function listQueuedJobs(): Promise<Job[]> {
       .in("kind", RECLAIM_KINDS)
       .order("created_at", { ascending: true })
       .limit(50);
-    const houseRows = house.data ?? [];
+    const houseRows = [...(houseVideo.data ?? []), ...(houseMusic.data ?? [])];
     const seen = new Set(houseRows.map((job) => job.id));
     return [...houseRows, ...(rest.data ?? []).filter((job) => !seen.has(job.id))];
   }
   const store = readStore();
   const queued = store.jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind));
-  const house = queued.filter(isHouseVideoJob);
-  const rest = queued.filter((j) => !isHouseVideoJob(j));
+  const house = queued.filter(isHousePayloadJob);
+  const rest = queued.filter((j) => !isHousePayloadJob(j));
   return [...house, ...rest].sort((a, b) => {
-    const ah = isHouseVideoJob(a) ? 0 : 1;
-    const bh = isHouseVideoJob(b) ? 0 : 1;
+    const ah = isHousePayloadJob(a) ? 0 : 1;
+    const bh = isHousePayloadJob(b) ? 0 : 1;
     if (ah !== bh) return ah - bh;
     return a.created_at.localeCompare(b.created_at);
   });
@@ -727,6 +875,78 @@ export async function insertMedia(input: {
   store.media.push(row);
   writeStore(store);
   return row;
+}
+
+export async function getMediaByStorageKey(storageKey: string): Promise<Media | null> {
+  if (!storageKey) return null;
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("media_assets")
+      .select("*")
+      .eq("storage_key", storageKey)
+      .limit(1);
+    return data?.[0] ?? null;
+  }
+  return readStore().media.find((m) => m.storage_key === storageKey) ?? null;
+}
+
+export async function updateMediaStorageKey(id: string, storageKey: string): Promise<Media | null> {
+  if (useRemote()) {
+    const { data, error } = await supabaseAdmin()
+      .from("media_assets")
+      .update({ storage_key: storageKey })
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  const store = readStore();
+  const idx = store.media.findIndex((m) => m.id === id);
+  if (idx < 0) return null;
+  store.media[idx] = { ...store.media[idx], storage_key: storageKey };
+  writeStore(store);
+  return store.media[idx];
+}
+
+export async function findHouseVideoForJob(jobId: string, resultUrl?: string | null): Promise<Media | null> {
+  const byPath = await getMediaByStorageKey(`house/video/${jobId}.mp4`);
+  if (byPath) return byPath;
+  if (resultUrl) {
+    const byUrl = await getMediaByStorageKey(resultUrl);
+    if (byUrl) return byUrl;
+  }
+  const recent = await listMediaByKind("house_video", 48);
+  return recent.find((row) => row.storage_key.includes(jobId) || (resultUrl && row.storage_key === resultUrl)) ?? null;
+}
+
+export async function findHouseAudioForJob(jobId: string, resultUrl?: string | null): Promise<Media | null> {
+  const byPath = await getMediaByStorageKey(`house/audio/${jobId}.wav`);
+  if (byPath) return byPath;
+  if (resultUrl) {
+    const byUrl = await getMediaByStorageKey(resultUrl);
+    if (byUrl) return byUrl;
+  }
+  const recent = await listMediaByKind("house_audio", 24);
+  return recent.find((row) => row.storage_key.includes(jobId) || (resultUrl && row.storage_key === resultUrl)) ?? null;
+}
+
+export async function listCompleteHouseJobs(limit = 40): Promise<Job[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "complete")
+      .in("kind", ["video", "music"])
+      .is("turn_id", null)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    return (data ?? []).filter(isHousePayloadJob);
+  }
+  return readStore()
+    .jobs.filter((j) => j.status === "complete" && (j.kind === "video" || j.kind === "music") && isHousePayloadJob(j))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit);
 }
 
 export async function insertModeration(input: {

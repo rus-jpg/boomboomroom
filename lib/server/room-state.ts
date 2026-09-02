@@ -1,4 +1,4 @@
-import { CLIP_COUNT, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS } from "@/lib/shared/constants";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS, MIN_PARTY_SIZE } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import { isPlayableVideoUrl } from "@/lib/shared/media";
 import { isMuted } from "@/lib/shared/moderation";
@@ -12,6 +12,7 @@ import {
   listParticipantsByIds,
   listPresence,
   listQueue,
+  listResidents,
   nextReadyDjTurn,
 } from "./repo";
 import { signedUrl } from "./storage";
@@ -29,6 +30,7 @@ async function toPublic(p: {
   character_reference_url: string | null;
   status: PublicParticipant["status"];
   muted_until: string | null;
+  is_resident?: boolean;
 }, isDj: boolean): Promise<PublicParticipant> {
   return {
     id: p.id,
@@ -38,6 +40,7 @@ async function toPublic(p: {
     status: p.status,
     muted: isMuted(p.muted_until),
     isDj,
+    isResident: Boolean(p.is_resident),
   };
 }
 
@@ -112,7 +115,16 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
 
   const participants: PublicParticipant[] = [];
   for (const p of uniquePresence.values()) {
+    if (p.is_resident) continue;
     participants.push(await toPublic(p, p.id === djId));
+  }
+
+  if (uniquePresence.size < MIN_PARTY_SIZE) {
+    const residents = await listResidents();
+    for (const r of residents) {
+      if (uniquePresence.has(r.id)) continue;
+      participants.push(await toPublic(r, false));
+    }
   }
 
   const queueView: QueueEntryView[] = [];

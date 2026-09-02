@@ -4,7 +4,7 @@ import {
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
-import { ensureHouseJobsQueued, takeHouseClipKeys } from "@/lib/server/house";
+import { ensureHouseJobsQueued, houseSetLabel, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { isBanned, isBlockedText, isMuted, normalizeChat, takeToken, type RateBucket } from "@/lib/shared/moderation";
 import type { RoomState } from "@/lib/shared/types";
@@ -105,15 +105,18 @@ export class RoomEngine {
       roomId,
       kind: "house",
       generationStatus: "playing",
-      musicPrompt: "House buffer — midnight basement disco",
+      musicPrompt: await houseSetLabel(),
       audioUrl: HOUSE_AUDIO_PATH,
       videoSegmentUrls: [],
       startsAt: bounds.startsAt,
       endsAt: bounds.endsAt,
     });
     try {
-      const keys = await takeHouseClipKeys(6, turn.id);
-      if (keys.length) await updateTurn(turn.id, { video_segment_urls: keys });
+      const [keys, audio] = await Promise.all([takeHouseClipKeys(6, turn.id), takeHouseAudioKey(turn.id)]);
+      await updateTurn(turn.id, {
+        video_segment_urls: keys,
+        ...(audio ? { audio_url: audio } : {}),
+      });
     } catch (err) {
       console.warn("[engine] house clip claim", err);
     }
@@ -206,6 +209,7 @@ export class RoomEngine {
     const room = await getRoomBySlug();
     const person = await getParticipant(participantId);
     if (!person) throw new Error("not cast");
+    if (person.is_resident) throw new Error("residents hold the house booth");
     if (person.status !== "ready") throw new Error("character still processing");
     if (isBanned(person.banned_until)) throw new Error("banned");
     const cap = await occupancy(room.id);
@@ -223,6 +227,7 @@ export class RoomEngine {
     const room = await getRoomBySlug();
     const person = await getParticipant(participantId);
     if (!person || person.status !== "ready") throw new Error("not ready");
+    if (person.is_resident) throw new Error("residents hold the house booth");
     if (isBanned(person.banned_until) || isMuted(person.muted_until)) throw new Error("restricted");
     const clean = normalizeChat(prompt, 400);
     if (clean.length < 8) throw new Error("prompt too short");

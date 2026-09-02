@@ -15,6 +15,7 @@ export type PublicParticipant = {
   status: ParticipantStatus;
   muted: boolean;
   isDj: boolean;
+  isResident: boolean;
 };
 
 export type QueueEntryView = {

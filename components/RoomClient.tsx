@@ -26,6 +26,7 @@ function demoState(name: string): RoomState {
         status: "ready",
         muted: false,
         isDj: false,
+        isResident: false,
       },
     ],
     queue: [],
@@ -149,16 +150,18 @@ export function RoomClient({
       <div className="room-body">
         <section className="panel">
           <h2>Booth queue</h2>
-          {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
-          {state.queue.map((q) => (
-            <div className="queue-item" key={q.id}>
-              <span>{String(q.position).padStart(2, "0")}</span>
-              <div>
-                <strong>{q.displayName}</strong>
-                <div style={{ color: "var(--muted)", fontSize: 12 }}>{q.status}</div>
+          <div className="panel-scroll">
+            {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
+            {state.queue.map((q) => (
+              <div className="queue-item" key={q.id}>
+                <span>{String(q.position).padStart(2, "0")}</span>
+                <div>
+                  <strong>{q.displayName}</strong>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>{q.status}</div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
           {inQueue ? (
             <button className="secondary" type="button" onClick={() => emit("queue:leave")}>
               Step off
@@ -171,29 +174,32 @@ export function RoomClient({
         </section>
         <section className="panel">
           <h2>In the room</h2>
-          {state.participants.map((p) => (
-            <div className="person" key={p.id}>
-              {p.characterUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img className="avatar" src={p.characterUrl} alt="" />
-              ) : (
-                <div className="avatar" />
-              )}
-              <div>
-                <strong>{p.displayName}</strong>
-                {p.isDj ? " · booth" : ""}
-                {p.muted ? " · muted" : ""}
+          <div className="panel-scroll">
+            {state.participants.map((p) => (
+              <div className="person" key={p.id}>
+                {p.characterUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="avatar" src={p.characterUrl} alt="" />
+                ) : (
+                  <div className="avatar" />
+                )}
+                <div>
+                  <strong>{p.displayName}</strong>
+                  {p.isResident ? <span className="badge-resident">Resident</span> : null}
+                  {p.isDj ? " · booth" : ""}
+                  {p.muted ? " · muted" : ""}
+                </div>
               </div>
-            </div>
-          ))}
-          <p className="lede" style={{ marginTop: 12, fontSize: 13 }}>
-            Six clips a turn. Appearances rotate through whoever is ready. Audio is the master clock.
-          </p>
+            ))}
+            <p className="lede" style={{ marginTop: 12, fontSize: 13 }}>
+              Six clips a turn. Appearances rotate through whoever is ready. Audio is the master clock.
+            </p>
+          </div>
         </section>
         <section className="panel">
           <h2>Open chat</h2>
           <div className="chat-log">
-            {state.chat.map((m) => (
+            {state.chat.slice(-40).map((m) => (
               <div className="chat-line" key={m.id}>
                 <strong>{m.displayName}</strong>
                 <span>{m.body}</span>
