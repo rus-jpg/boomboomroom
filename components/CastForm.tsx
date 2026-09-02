@@ -1,12 +1,32 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { CHARACTER_MAX, CHARACTER_MIN, NAME_MAX, NAME_MIN } from "@/lib/shared/constants";
 
-export function CastForm() {
+export function CastForm({ onCast }: { onCast?: () => void }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [face, setFace] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [drag, setDrag] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
+
+  function takeFile(file: File | undefined) {
+    if (!file) return;
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(file);
+    });
+    setFace(file);
+    setError(null);
+  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -14,6 +34,7 @@ export function CastForm() {
     setError(null);
     const form = new FormData(e.currentTarget);
     if (form.get("consent") === "on") form.set("consent", "true");
+    if (face) form.set("face", face);
     const res = await fetch("/api/cast", { method: "POST", body: form });
     const json = (await res.json().catch(() => ({}))) as { error?: string };
     setBusy(false);
@@ -21,44 +42,70 @@ export function CastForm() {
       setError(json.error || "Casting failed.");
       return;
     }
-    router.push("/room");
-    router.refresh();
+    if (onCast) onCast();
+    else {
+      router.push("/room");
+      router.refresh();
+    }
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <p className="eyebrow">Anonymous cast</p>
-      <h1 className="display" style={{ fontSize: 48, margin: "8px 0 18px" }}>
-        Become someone
+    <form className="cast-form" onSubmit={onSubmit}>
+      <h1 className="display" id="cast-title">
+        Cast
       </h1>
       <label>
-        Display name
-        <input name="displayName" required minLength={2} maxLength={24} placeholder="Midnight Fox" />
-      </label>
-      <label>
-        Character description
-        <textarea
-          name="characterPrompt"
+        Name
+        <input
+          name="displayName"
+          type="text"
           required
-          minLength={12}
-          maxLength={400}
-          placeholder="Chrome-skinned dancer in a wet vinyl coat, gold teeth, 1978 Tokyo basement"
+          minLength={NAME_MIN}
+          maxLength={NAME_MAX}
+          placeholder="Midnight Fox"
+          autoComplete="nickname"
         />
       </label>
       <label>
-        Face photo
-        <input name="face" type="file" accept="image/jpeg,image/png,image/webp" required />
+        Look
+        <textarea
+          name="characterPrompt"
+          required
+          minLength={CHARACTER_MIN}
+          maxLength={CHARACTER_MAX}
+          placeholder="Wet vinyl, gold teeth, Tokyo basement"
+        />
+      </label>
+      <label className="cast-face-label">
+        Face
+        <div className={`cast-drop${preview ? " is-filled" : ""}${drag ? " is-drag" : ""}`}>
+          {preview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview} alt="" />
+          ) : (
+            <span>Drop or click</span>
+          )}
+          <input
+            className="cast-drop-input"
+            name="face"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            required={!face}
+            onChange={(e) => takeFile(e.target.files?.[0])}
+            onDragEnter={() => setDrag(true)}
+            onDragOver={() => setDrag(true)}
+            onDragLeave={() => setDrag(false)}
+            onDrop={() => setDrag(false)}
+          />
+        </div>
       </label>
       <label className="consent">
         <input name="consent" type="checkbox" required />
-        <span>
-          I consent to this photo being used to generate a stylized character and short music-video clips
-          that may include my likeness in this room. Faces stay private; only the generated look is shown.
-        </span>
+        <span>I consent. Face stays private — generated look only.</span>
       </label>
       {error ? <p className="error">{error}</p> : null}
       <button className="cta" type="submit" disabled={busy}>
-        {busy ? "Casting…" : "Enter Boom Boom Room"}
+        {busy ? "Casting…" : "Enter"}
       </button>
     </form>
   );
