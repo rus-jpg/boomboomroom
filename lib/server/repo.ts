@@ -471,22 +471,23 @@ export async function getTurn(id: string): Promise<Turn | null> {
 }
 
 export async function latestPlayingTurn(roomId: string): Promise<Turn | null> {
+  const playing = await listPlayingTurns(roomId);
+  return playing[0] ?? null;
+}
+
+export async function listPlayingTurns(roomId: string): Promise<Turn[]> {
   if (useRemote()) {
     const { data } = await supabaseAdmin()
       .from("turns")
       .select("*")
       .eq("room_id", roomId)
       .eq("generation_status", "playing")
-      .order("starts_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return data;
+      .order("starts_at", { ascending: false });
+    return data ?? [];
   }
-  return (
-    readStore()
-      .turns.filter((t) => t.room_id === roomId && t.generation_status === "playing")
-      .sort((a, b) => (b.starts_at ?? "").localeCompare(a.starts_at ?? ""))[0] ?? null
-  );
+  return readStore()
+    .turns.filter((t) => t.room_id === roomId && t.generation_status === "playing")
+    .sort((a, b) => (b.starts_at ?? "").localeCompare(a.starts_at ?? ""));
 }
 
 export async function nextReadyDjTurn(roomId: string): Promise<Turn | null> {
@@ -824,6 +825,24 @@ export async function listRunningFalJobs(): Promise<Job[]> {
   }
   return readStore()
     .jobs.filter((j) => j.status === "running" && Boolean(j.fal_request_id) && RECLAIM_KINDS.includes(j.kind))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** Claims that never reached fal (deploy race / crash between claim and submit). */
+export async function listStuckRunningJobs(): Promise<Job[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "running")
+      .in("kind", RECLAIM_KINDS)
+      .is("fal_request_id", null)
+      .order("created_at", { ascending: true })
+      .limit(50);
+    return data ?? [];
+  }
+  return readStore()
+    .jobs.filter((j) => j.status === "running" && !j.fal_request_id && RECLAIM_KINDS.includes(j.kind))
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 

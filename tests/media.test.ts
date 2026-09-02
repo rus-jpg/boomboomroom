@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { houseClipPrompt, houseMusicPrompt } from "../lib/shared/house-prompt";
 import { isPlayableAudioUrl, isPlayableVideoUrl, isStubHouseAudio, isStubHouseVideo } from "../lib/shared/media";
-import { RESIDENT_SEEDS, residentSessionHash } from "../lib/shared/residents";
+import { RESIDENT_SEEDS, isResidentJobPayload, residentSessionHash } from "../lib/shared/residents";
 
 describe("house livestream urls", () => {
   it("treats empty and public stubs as not playable", () => {
@@ -53,5 +53,12 @@ describe("resident crew", () => {
       expect.arrayContaining(["Neon Mira", "Basement Kev", "Vinyl Ghost"]),
     );
     expect(residentSessionHash("neon-mira")).toBe("resident:neon-mira");
+  });
+
+  it("treats resident job payloads as resident even if JSONB stringifies the flag", () => {
+    expect(isResidentJobPayload({ resident: true })).toBe(true);
+    expect(isResidentJobPayload({ resident: "true" })).toBe(true);
+    expect(isResidentJobPayload({ resident: false })).toBe(false);
+    expect(isResidentJobPayload({})).toBe(false);
   });
 });

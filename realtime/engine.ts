@@ -22,6 +22,7 @@ import {
   insertTurn,
   latestPlayingTurn,
   leaveQueue,
+  listPlayingTurns,
   listQueue,
   nextReadyDjTurn,
   occupancy,
@@ -84,12 +85,31 @@ export class RoomEngine {
     }
   }
 
+  /** Extra house turns left `playing` after a newer set started (deploy / restart). */
+  private async completeZombieHouseTurns(roomId: string) {
+    const rows = await listPlayingTurns(roomId);
+    if (rows.length <= 1) return;
+    const latestId = rows[0]?.id;
+    const now = Date.now();
+    for (const turn of rows) {
+      if (turn.id === latestId) continue;
+      if (turn.kind !== "house") continue;
+      const ends = turn.ends_at ? new Date(turn.ends_at).getTime() : 0;
+      if (ends && ends <= now) {
+        await updateTurn(turn.id, { generation_status: "complete" });
+      }
+    }
+  }
+
   private async ensureHousePlaying() {
     const room = await getRoomBySlug();
+    await this.completeZombieHouseTurns(room.id);
     const playing = await latestPlayingTurn(room.id);
+    if (playing?.kind === "dj") return;
     if (playing && playing.generation_status === "playing") {
       const ends = playing.ends_at ? new Date(playing.ends_at).getTime() : 0;
       if (ends > Date.now()) return;
+      await updateTurn(playing.id, { generation_status: "complete" });
     }
     await this.startHouse(room.id);
   }
@@ -135,6 +155,7 @@ export class RoomEngine {
 
   private async advancePlayback() {
     const room = await getRoomBySlug();
+    await this.completeZombieHouseTurns(room.id);
     const playing = await latestPlayingTurn(room.id);
     if (!playing) {
       await this.startHouse(room.id);
