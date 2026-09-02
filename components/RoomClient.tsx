@@ -8,27 +8,50 @@ import { clockFromStart } from "@/lib/shared/clock";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { Stage } from "./Stage";
 
+function demoPortrait(hue: number): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 90 120">
+    <defs>
+      <linearGradient id="g${hue}" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="hsl(${hue},72%,28%)"/>
+        <stop offset="1" stop-color="hsl(${(hue + 48) % 360},80%,12%)"/>
+      </linearGradient>
+    </defs>
+    <rect width="90" height="120" fill="url(#g${hue})"/>
+    <circle cx="45" cy="46" r="20" fill="rgba(246,239,230,0.28)"/>
+    <ellipse cx="45" cy="108" rx="32" ry="28" fill="rgba(246,239,230,0.16)"/>
+  </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function demoState(name: string): RoomState {
   const start = Math.floor(Date.now() / 60_000) * 60_000;
+  const crew = [
+    { id: "me", displayName: name, hue: 332, isDj: false, isResident: false, muted: false },
+    { id: "res-1", displayName: "House Cat", hue: 188, isDj: false, isResident: true, muted: false },
+    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: true, isResident: false, muted: false },
+    { id: "p-3", displayName: "Neon Fox", hue: 312, isDj: false, isResident: false, muted: false },
+    { id: "p-4", displayName: "Basement", hue: 262, isDj: false, isResident: false, muted: true },
+    { id: "p-5", displayName: "Acid Mira", hue: 148, isDj: false, isResident: false, muted: false },
+    { id: "p-6", displayName: "Chrome", hue: 200, isDj: false, isResident: false, muted: false },
+    { id: "p-7", displayName: "Lowlight", hue: 18, isDj: false, isResident: false, muted: false },
+  ] as const;
   return {
     roomId: "demo",
     slug: "main",
     name: PRODUCT_NAME,
     mockMode: true,
-    occupancy: 1,
+    occupancy: crew.length,
     maxOccupancy: 20,
-    participants: [
-      {
-        id: "me",
-        displayName: name,
-        characterPrompt: "demo",
-        characterUrl: null,
-        status: "ready",
-        muted: false,
-        isDj: false,
-        isResident: false,
-      },
-    ],
+    participants: crew.map((p) => ({
+      id: p.id,
+      displayName: p.displayName,
+      characterPrompt: "demo",
+      characterUrl: demoPortrait(p.hue),
+      status: "ready" as const,
+      muted: p.muted,
+      isDj: p.isDj,
+      isResident: p.isResident,
+    })),
     queue: [],
     chat: [
       {
@@ -174,26 +197,43 @@ export function RoomClient({
         </section>
         <section className="panel">
           <h2>In the room</h2>
+          <p className="people-lede">
+            Six clips a turn. Appearances rotate through whoever is ready. Audio is the master clock.
+          </p>
           <div className="panel-scroll">
-            {state.participants.map((p) => (
-              <div className="person" key={p.id}>
-                {p.characterUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="avatar" src={p.characterUrl} alt="" />
-                ) : (
-                  <div className="avatar" />
-                )}
-                <div>
-                  <strong>{p.displayName}</strong>
-                  {p.isResident ? <span className="badge-resident">Resident</span> : null}
-                  {p.isDj ? " · booth" : ""}
-                  {p.muted ? " · muted" : ""}
-                </div>
-              </div>
-            ))}
-            <p className="lede" style={{ marginTop: 12, fontSize: 13 }}>
-              Six clips a turn. Appearances rotate through whoever is ready. Audio is the master clock.
-            </p>
+            <div className="people-grid">
+              {state.participants.map((p) => {
+                const cues = [
+                  p.isResident ? "Resident" : null,
+                  p.isDj ? "booth" : null,
+                  p.muted ? "muted" : null,
+                ].filter(Boolean);
+                return (
+                  <article
+                    className={`person-tile${p.isDj ? " is-dj" : ""}${p.muted ? " is-muted" : ""}`}
+                    key={p.id}
+                    title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
+                  >
+                    <div className="person-portrait">
+                      {p.characterUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img className="avatar" src={p.characterUrl} alt="" />
+                      ) : (
+                        <div className="avatar" aria-hidden />
+                      )}
+                      {p.isDj || p.muted ? (
+                        <div className="person-overlays">
+                          {p.isDj ? <span className="person-chip booth">booth</span> : null}
+                          {p.muted ? <span className="person-chip muted">muted</span> : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <strong className="person-name">{p.displayName}</strong>
+                    {p.isResident ? <span className="badge-resident">Resident</span> : null}
+                  </article>
+                );
+              })}
+            </div>
           </div>
         </section>
         <section className="panel">
