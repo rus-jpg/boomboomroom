@@ -1,11 +1,13 @@
 import { Queue } from "bullmq";
 import { QUEUES } from "@/lib/shared/constants";
 import { redisUrl } from "./env";
+import { redisConnection } from "./redis";
+
+let producer: ReturnType<typeof redisConnection> | null = null;
 
 function connection() {
-  const url = redisUrl();
-  if (!url) throw new Error("REDIS_URL is required to enqueue jobs");
-  return { url };
+  producer ??= redisConnection();
+  return producer;
 }
 
 let queues: {
@@ -49,6 +51,7 @@ export async function enqueueFinalize(turnId: string) {
 }
 
 export async function publishRoomEvent(payload: unknown) {
+  if (process.env.VERCEL) return;
   const url = redisUrl();
   if (!url) return;
   const { default: Redis } = await import("ioredis");

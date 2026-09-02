@@ -5,28 +5,50 @@ import { QUEUES } from "@/lib/shared/constants";
 import { isMockMode, redisUrl } from "@/lib/server/env";
 import { submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
 import { enqueueFinalize, publishRoomEvent } from "@/lib/server/queues";
-import { getJob, getParticipant, insertMedia, updateJob, updateParticipant } from "@/lib/server/repo";
+import {
+  claimQueuedJob,
+  getJob,
+  getParticipant,
+  insertMedia,
+  listQueuedJobs,
+  updateJob,
+  updateParticipant,
+} from "@/lib/server/repo";
+import { redisConnection } from "@/lib/server/redis";
 import { signedUrl, uploadBytes } from "@/lib/server/storage";
 import { finalizeTurn, ingestFalWebhook } from "./ingest";
 import { mockCharacterJpeg } from "./mock";
 
-function connection() {
-  const url = redisUrl();
-  if (!url) throw new Error("REDIS_URL is required for the worker");
-  return { url };
+const RECLAIM_MS = 12_000;
+const FACE_SIGNED_TTL_S = 60 * 60 * 24;
+
+async function takeQueued(jobId: string) {
+  const current = await getJob(jobId);
+  if (!current) return null;
+  if (current.status === "complete" || current.status === "failed" || current.fal_request_id) return null;
+  if (current.status !== "queued") return null;
+  return claimQueuedJob(jobId);
 }
 
 async function handleCharacter(jobId: string) {
-  const job = await getJob(jobId);
+  const job = await takeQueued(jobId);
   if (!job || !job.participant_id) return;
   const person = await getParticipant(job.participant_id);
   if (!person) return;
-  await updateJob(job.id, { status: "running" });
 
   const faceKey = person.original_face_url;
-  const faceUrl = faceKey ? (await signedUrl(faceKey, 3600)) || faceKey : "";
+  const faceUrl = faceKey ? (await signedUrl(faceKey, FACE_SIGNED_TTL_S)) || faceKey : "";
+  const imageUrl = faceUrl.startsWith("http") ? faceUrl : "";
+  if (!isMockMode() && !imageUrl) {
+    await updateJob(job.id, {
+      status: "failed",
+      error: "face image is not publicly fetchable for fal",
+      completed_at: new Date().toISOString(),
+    });
+    return;
+  }
   const submitted = await submitCharacter({
-    imageUrl: faceUrl.startsWith("http") ? faceUrl : "https://fal.media/files/placeholder.jpg",
+    imageUrl: imageUrl || "https://fal.media/files/placeholder.jpg",
     prompt: person.character_prompt,
     jobId: job.id,
   });
@@ -52,10 +74,9 @@ async function handleCharacter(jobId: string) {
 }
 
 async function handleMusic(jobId: string) {
-  const job = await getJob(jobId);
+  const job = await takeQueued(jobId);
   if (!job || !job.turn_id) return;
   const payload = (job.payload ?? {}) as { prompt?: string; lyrics?: string };
-  await updateJob(job.id, { status: "running" });
   const submitted = await submitMusic({
     prompt: payload.prompt || "Genre: midnight disco. BPM: 118.",
     lyrics: payload.lyrics,
@@ -73,17 +94,16 @@ async function handleMusic(jobId: string) {
 }
 
 async function handleVideo(jobId: string) {
-  const job = await getJob(jobId);
+  const job = await takeQueued(jobId);
   if (!job || !job.turn_id) return;
   const payload = (job.payload ?? {}) as {
     clipIndex?: number;
     prompt?: string;
     referenceImageUrl?: string | null;
   };
-  await updateJob(job.id, { status: "running" });
   let ref = payload.referenceImageUrl ?? null;
   if (ref && !ref.startsWith("http") && !ref.startsWith("/")) {
-    ref = (await signedUrl(ref, 3600)) || ref;
+    ref = (await signedUrl(ref, FACE_SIGNED_TTL_S)) || ref;
   }
   const submitted = await submitVideo({
     prompt: payload.prompt || "Cinematic nightclub music video, 16:9.",
@@ -106,6 +126,21 @@ async function handleFinalize(turnId: string) {
   await finalizeTurn(turnId);
 }
 
+async function reclaimQueuedJobs() {
+  const jobs = await listQueuedJobs();
+  if (!jobs.length) return;
+  console.log(`[worker] reclaiming ${jobs.length} queued job(s)`);
+  for (const job of jobs) {
+    try {
+      if (job.kind === "character") await handleCharacter(job.id);
+      else if (job.kind === "music") await handleMusic(job.id);
+      else if (job.kind === "video") await handleVideo(job.id);
+    } catch (err) {
+      console.error(`[worker] reclaim ${job.id}`, err);
+    }
+  }
+}
+
 async function main() {
   const health = createServer((req, res) => {
     if (req.url === "/health") {
@@ -118,20 +153,18 @@ async function main() {
   });
   health.listen(Number(process.env.HEALTH_PORT || process.env.PORT || 4100), "0.0.0.0");
 
-  if (!redisUrl()) {
-    console.log("[worker] REDIS_URL missing — idle health server only (mock inline path used by realtime)");
-    return;
-  }
-
-  const conn = connection();
-  const workers = [
-    new Worker(QUEUES.character, async (job) => handleCharacter(String(job.data.jobId)), { connection: conn, concurrency: 4 }),
-    new Worker(QUEUES.music, async (job) => handleMusic(String(job.data.jobId)), { connection: conn, concurrency: 2 }),
-    new Worker(QUEUES.video, async (job) => handleVideo(String(job.data.jobId)), { connection: conn, concurrency: 6 }),
-    new Worker(QUEUES.finalize, async (job) => handleFinalize(String(job.data.turnId)), { connection: conn, concurrency: 2 }),
-  ];
-
   if (redisUrl()) {
+    const conn = redisConnection();
+    const workers = [
+      new Worker(QUEUES.character, async (job) => handleCharacter(String(job.data.jobId)), { connection: conn, concurrency: 4 }),
+      new Worker(QUEUES.music, async (job) => handleMusic(String(job.data.jobId)), { connection: conn, concurrency: 2 }),
+      new Worker(QUEUES.video, async (job) => handleVideo(String(job.data.jobId)), { connection: conn, concurrency: 6 }),
+      new Worker(QUEUES.finalize, async (job) => handleFinalize(String(job.data.turnId)), { connection: conn, concurrency: 2 }),
+    ];
+    for (const w of workers) {
+      w.on("failed", (job, err) => console.error(`[worker] ${w.name} failed`, job?.id, err));
+    }
+
     const sub = new Redis(redisUrl()!);
     sub.subscribe("bbr:fal:webhook");
     sub.on("message", (_ch, raw) => {
@@ -142,13 +175,15 @@ async function main() {
         console.error("[worker] webhook ingest", err);
       }
     });
+    console.log(`[worker] Boom Boom Room workers online (mock=${isMockMode()})`);
+  } else {
+    console.log("[worker] REDIS_URL missing — DB claim loop only (no BullMQ)");
   }
 
-  for (const w of workers) {
-    w.on("failed", (job, err) => console.error(`[worker] ${w.name} failed`, job?.id, err));
-  }
-
-  console.log(`[worker] Boom Boom Room workers online (mock=${isMockMode()})`);
+  await reclaimQueuedJobs();
+  setInterval(() => {
+    void reclaimQueuedJobs();
+  }, RECLAIM_MS);
 }
 
 main().catch((err) => {
