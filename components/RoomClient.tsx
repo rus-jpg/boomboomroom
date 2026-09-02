@@ -324,11 +324,9 @@ export function RoomClient({
           <p className="room-set display">{nowPlayingLabel(state.currentTurn)}</p>
         </div>
         <div className="room-header-actions">
-          {!guest ? (
-            <button className="exit-sign" type="button" onClick={() => void exitRoom()} aria-label="Exit room">
-              EXIT
-            </button>
-          ) : null}
+          <button className="exit-sign" type="button" onClick={() => void exitRoom()} aria-label="Exit room">
+            EXIT
+          </button>
         </div>
       </header>
       <div className="room-body">
