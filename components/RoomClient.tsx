@@ -91,15 +91,13 @@ export function RoomClient({
   realtimeUrl: string;
 }) {
   const router = useRouter();
-  const [state, setState] = useState(() =>
-    !session && !realtimeUrl ? demoState("Guest") : initial,
-  );
+  const [state, setState] = useState(initial);
   const [socketReady, setSocketReady] = useState(false);
   const [chat, setChat] = useState("");
   const [prompt, setPrompt] = useState("");
   const [lyrics, setLyrics] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(initial.clock.serverNow);
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {

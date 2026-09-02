@@ -148,8 +148,8 @@ textarea { min-height: 120px; resize: vertical; }
   place-items: center;
   padding: 24px;
   overflow: auto;
-  background: rgba(5, 5, 8, 0.58);
-  backdrop-filter: blur(10px);
+  background: rgba(5, 5, 8, 0.42);
+  backdrop-filter: blur(6px);
 }
 .cast-form {
   width: min(720px, 100%);
