@@ -21,7 +21,15 @@ export function webhookBaseUrl(): string {
 }
 
 export function redisUrl(): string | undefined {
-  return process.env.REDIS_URL || process.env.REDIS_PRIVATE_URL;
+  if (process.env.REDIS_URL) return process.env.REDIS_URL;
+  if (process.env.REDIS_PRIVATE_URL) return process.env.REDIS_PRIVATE_URL;
+  const host = process.env.REDISHOST;
+  if (!host) return undefined;
+  const port = process.env.REDISPORT || "6379";
+  const user = process.env.REDISUSER || "default";
+  const pass = process.env.REDISPASSWORD || "";
+  const auth = pass ? `${encodeURIComponent(user)}:${encodeURIComponent(pass)}@` : "";
+  return `redis://${auth}${host}:${port}`;
 }
 
 export function realtimePort(): number {
