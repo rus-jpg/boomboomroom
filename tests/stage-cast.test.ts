@@ -79,7 +79,7 @@ describe("DJ turn clip casting", () => {
     expect(booth).toMatch(/DJ booth\/mixer/i);
     expect(booth).not.toMatch(/NOT in the DJ booth/);
     expect(floor).toMatch(/Neon Fox/);
-    expect(floor).toMatch(/NOT in the DJ booth/);
+    expect(floor).toMatch(/NOT DJing/);
     expect(floor).not.toMatch(/performing behind the DJ booth/);
   });
 });
@@ -95,10 +95,10 @@ describe("house clip casting", () => {
     }
   });
 
-  it("features ready dancers on most clips so new joiners hit the floor", () => {
+  it("features dancers on floor slots and the resident holder in booth slots", () => {
     const roles = Array.from({ length: 6 }, (_, i) => assignHouseClip(i, [dancerA], [resident]).role);
-    expect(roles.filter((r) => r === "dancer").length).toBeGreaterThanOrEqual(4);
-    expect(roles.filter((r) => r === "dj").length).toBe(1);
+    expect(roles.filter((r) => r === "dancer").length).toBe(3);
+    expect(roles.filter((r) => r === "dj").length).toBe(3);
     const dancer = assignHouseClip(1, [dancerA], [resident]);
     expect(dancer.person?.id).toBe(dancerA.id);
   });
@@ -123,7 +123,7 @@ describe("house clip casting", () => {
   it("falls back to anonymous booth or crowd when nobody has a face", () => {
     expect(assignHouseClip(0, [], []).role).toBe("dj");
     expect(assignHouseClip(0, [], []).person).toBeNull();
-    expect(assignHouseClip(2, [], []).role).toBe("crowd");
+    expect(assignHouseClip(1, [], []).role).toBe("crowd");
   });
 });
 
@@ -131,7 +131,7 @@ describe("house clip prompts", () => {
   it("states dancer role instead of ambiguous dancing-or-DJing", () => {
     const prompt = houseClipPrompt(2, { display_name: "Neon Mira", character_prompt: "magenta DJ" }, "dancer");
     expect(prompt).toMatch(/Neon Mira/);
-    expect(prompt).toMatch(/NOT in the DJ booth/);
+    expect(prompt).toMatch(/NOT DJing/);
     expect(prompt).not.toMatch(/dancing or DJing/);
   });
 

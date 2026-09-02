@@ -95,16 +95,16 @@ export function djClipPrompt(input: {
   const count = input.clipCount ?? CLIP_COUNT;
   const tail = `Nightclub music video, 16:9, cinematic, moving with the track: ${input.track}. Clip ${input.clipIndex + 1} of ${count}.`;
   if (input.role === "booth" && input.person) {
-    return `Image 1 is ${input.person.display_name}, ${input.person.character_prompt}. Image 1 is ${input.person.display_name}, performing behind the DJ booth/mixer, DJing. They are the only DJ. ${tail}`;
+    return `Image 1 is ${input.person.display_name}, ${input.person.character_prompt}. Image 1 is ${input.person.display_name}, performing behind the DJ booth/mixer, DJing. They are the only DJ. No other person is DJing. ${tail}`;
   }
   if (input.role === "floor" && input.person) {
-    return `Image 1 is ${input.person.display_name}, ${input.person.character_prompt}. Image 1 is ${input.person.display_name}, dancing on the club floor, NOT in the DJ booth. ${tail}`;
+    return `Image 1 is ${input.person.display_name}, ${input.person.character_prompt}. Image 1 is ${input.person.display_name}, dancing on the club floor with the crowd, NOT DJing, NOT in the DJ booth, not operating decks. ${tail}`;
   }
-  return `Anonymous packed dancefloor, bodies in motion, no specific face, NOT a close-up of someone DJing behind the decks. ${tail}`;
+  return `Anonymous packed dancefloor, bodies in motion, no specific face, NOT DJing, NOT a close-up of someone behind the decks. ${tail}`;
 }
 
 /**
- * House livestream: most clips are dancers (ready people on the floor).
+ * House livestream: booth slots match DJ turns (3 of 6). Dancers fill the rest.
  * Booth clips use the current resident holder when known — never a random human as DJ.
  */
 export function assignHouseClip(
@@ -115,7 +115,7 @@ export function assignHouseClip(
 ): HouseClipCast {
   const clipCount = opts?.clipCount ?? CLIP_COUNT;
   const slot = Math.abs(seq) % clipCount;
-  const boothSlot = slot === 0;
+  const boothSlot = isDjBoothSlot(slot, clipCount);
   if (boothSlot) {
     const holder = opts?.boothHolder ?? (residents.length ? residents[Math.abs(Math.floor(seq / clipCount)) % residents.length] : null);
     if (holder) return { role: "dj", person: holder };

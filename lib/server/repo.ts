@@ -730,15 +730,16 @@ export async function listMediaByKind(kind: Media["kind"], limit = 12): Promise<
       .eq("kind", kind)
       .order("created_at", { ascending: false })
       .limit(limit);
-    return data ?? [];
+    return (data ?? []).map(withMediaRole);
   }
   return readStore()
     .media.filter((m) => m.kind === kind)
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(withMediaRole);
 }
 
-export async function listUnusedHouseClips(limit = 12): Promise<Media[]> {
+export async function listUnusedHouseClips(limit = 48): Promise<Media[]> {
   if (useRemote()) {
     const { data } = await supabaseAdmin()
       .from("media_assets")
@@ -747,12 +748,13 @@ export async function listUnusedHouseClips(limit = 12): Promise<Media[]> {
       .is("turn_id", null)
       .order("created_at", { ascending: true })
       .limit(limit);
-    return data ?? [];
+    return (data ?? []).map(withMediaRole);
   }
   return readStore()
     .media.filter((m) => m.kind === "house_video" && m.turn_id === null)
     .sort((a, b) => a.created_at.localeCompare(b.created_at))
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(withMediaRole);
 }
 
 export async function countUnusedHouseClips(): Promise<number> {
@@ -795,6 +797,64 @@ export async function claimUnusedHouseClips(count: number, turnId: string): Prom
     }
   }
   return claimed;
+}
+
+/** Claim specific unused house clips (holder-safe selection already happened). */
+export async function claimHouseClipsByIds(ids: string[], turnId: string): Promise<Media[]> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return [];
+  const claimed: Media[] = [];
+  for (const id of unique) {
+    if (useRemote()) {
+      const { data, error } = await supabaseAdmin()
+        .from("media_assets")
+        .update({ turn_id: turnId })
+        .eq("id", id)
+        .eq("kind", "house_video")
+        .is("turn_id", null)
+        .select("*")
+        .maybeSingle();
+      if (error) throw error;
+      if (data) claimed.push(data);
+    } else {
+      const store = readStore();
+      const idx = store.media.findIndex((m) => m.id === id && m.kind === "house_video" && m.turn_id === null);
+      if (idx < 0) continue;
+      store.media[idx] = { ...store.media[idx], turn_id: turnId };
+      writeStore(store);
+      claimed.push(store.media[idx]);
+    }
+  }
+  return claimed;
+}
+
+/** Return clips this turn no longer needs so another holder can play them. */
+export async function releaseHouseClips(ids: string[], turnId: string): Promise<number> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return 0;
+  let released = 0;
+  for (const id of unique) {
+    if (useRemote()) {
+      const { data, error } = await supabaseAdmin()
+        .from("media_assets")
+        .update({ turn_id: null })
+        .eq("id", id)
+        .eq("kind", "house_video")
+        .eq("turn_id", turnId)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      if (data) released += 1;
+    } else {
+      const store = readStore();
+      const idx = store.media.findIndex((m) => m.id === id && m.kind === "house_video" && m.turn_id === turnId);
+      if (idx < 0) continue;
+      store.media[idx] = { ...store.media[idx], turn_id: null };
+      writeStore(store);
+      released += 1;
+    }
+  }
+  return released;
 }
 
 export async function listUnusedHouseAudio(limit = 8): Promise<Media[]> {
@@ -983,6 +1043,7 @@ export async function insertMedia(input: {
   durationMs?: number | null;
   participantId?: string | null;
   turnId?: string | null;
+  role?: string | null;
 }): Promise<Media> {
   const row: Media = {
     id: randomUUID(),
@@ -991,6 +1052,7 @@ export async function insertMedia(input: {
     content_type: input.contentType,
     duration_ms: input.durationMs ?? null,
     participant_id: input.participantId ?? null,
+    role: input.role ?? null,
     turn_id: input.turnId ?? null,
     visibility: "signed",
     created_at: nowIso(),
@@ -1006,6 +1068,10 @@ export async function insertMedia(input: {
   return row;
 }
 
+function withMediaRole(row: Media): Media {
+  return { ...row, role: row.role ?? null };
+}
+
 export async function getMediaByStorageKey(storageKey: string): Promise<Media | null> {
   if (!storageKey) return null;
   if (useRemote()) {
@@ -1014,9 +1080,21 @@ export async function getMediaByStorageKey(storageKey: string): Promise<Media | 
       .select("*")
       .eq("storage_key", storageKey)
       .limit(1);
-    return data?.[0] ?? null;
+    return data?.[0] ? withMediaRole(data[0]) : null;
   }
-  return readStore().media.find((m) => m.storage_key === storageKey) ?? null;
+  const row = readStore().media.find((m) => m.storage_key === storageKey);
+  return row ? withMediaRole(row) : null;
+}
+
+export async function listMediaByStorageKeys(keys: string[]): Promise<Media[]> {
+  const unique = [...new Set(keys.filter(Boolean))];
+  if (!unique.length) return [];
+  if (useRemote()) {
+    const { data } = await supabaseAdmin().from("media_assets").select("*").in("storage_key", unique);
+    return (data ?? []).map(withMediaRole);
+  }
+  const set = new Set(unique);
+  return readStore().media.filter((m) => set.has(m.storage_key)).map(withMediaRole);
 }
 
 export async function updateMediaStorageKey(id: string, storageKey: string): Promise<Media | null> {

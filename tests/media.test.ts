@@ -28,6 +28,7 @@ describe("house clip prompt", () => {
     const prompt = houseClipPrompt(2, { display_name: "Neon Mira", character_prompt: "magenta DJ" }, "dancer");
     expect(prompt).toMatch(/dancing|dancefloor|club floor/i);
     expect(prompt).toMatch(/Neon Mira/);
+    expect(prompt).toMatch(/NOT DJing/);
     expect(prompt).toMatch(/NOT in the DJ booth/);
   });
 });

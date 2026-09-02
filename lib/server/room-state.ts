@@ -63,7 +63,7 @@ function emptySegments(): VideoSegment[] {
 async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): Promise<TurnView | null> {
   if (!turn) return null;
   const dj = turn.dj_participant_id ? await getParticipant(turn.dj_participant_id) : null;
-  const rawVideos = asStringArray(turn.video_segment_urls).filter((url) => isPlayableVideoUrl(url));
+  const rawVideos = asStringArray(turn.video_segment_urls);
   const featuredByIndex = new Map<number, { participantId: string | null; displayName: string | null }>();
   if (turn.kind === "dj") {
     const jobs = await listJobsForTurn(turn.id);
@@ -77,9 +77,10 @@ async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): 
     const ids = [...new Set(videos.map((job) => job.participant_id).filter((id): id is string => Boolean(id)))];
     const people = await listParticipantsByIds(ids);
     const byId = new Map(people.map((p) => [p.id, p]));
-    for (const [i, job] of videos.entries()) {
+    for (const job of videos) {
+      const clipIndex = Number((job.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
       const person = job.participant_id ? byId.get(job.participant_id) : null;
-      featuredByIndex.set(i, {
+      featuredByIndex.set(clipIndex, {
         participantId: person?.id ?? job.participant_id ?? null,
         displayName: person?.display_name ?? null,
       });
@@ -90,7 +91,8 @@ async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): 
     segments.push(...emptySegments());
   } else {
     for (let i = 0; i < CLIP_COUNT; i++) {
-      const resolved = await resolveUrl(rawVideos[i % rawVideos.length]);
+      const url = rawVideos[i] ?? "";
+      const resolved = isPlayableVideoUrl(url) ? await resolveUrl(url) : "";
       const meta = featuredByIndex.get(i);
       segments.push({
         url: resolved ?? "",

@@ -98,6 +98,60 @@ describe("finalizeTurn after stale music", () => {
     expect((await getTurn(turn.id))?.generation_status).toBe("failed");
     expect((await getQueueEntry(entry.id))?.status).toBe("skipped");
   });
+
+  it("keeps DJ clipIndex slots so a missing booth clip does not shift a dancer into slot 0", async () => {
+    const room = await getRoomBySlug();
+    const person = await createParticipant({
+      sessionHash: "s-align",
+      displayName: "Velvet",
+      characterPrompt: "silver sequin dancer in the booth",
+      ipHash: null,
+    });
+    const turn = await insertTurn({
+      roomId: room.id,
+      kind: "dj",
+      djParticipantId: person.id,
+      generationStatus: "generating",
+    });
+    const music = await insertJob({
+      kind: "music",
+      turnId: turn.id,
+      participantId: person.id,
+      payload: { prompt: "acid disco" },
+    });
+    await updateJob(music.id, {
+      status: "complete",
+      result: { audio: { url: "https://cdn.example/acid.wav" }, duration: 60 },
+    });
+    for (let i = 0; i < 6; i++) {
+      const clip = await insertJob({
+        kind: "video",
+        turnId: turn.id,
+        participantId: i % 2 === 0 ? person.id : null,
+        payload: { clipIndex: i, role: i % 2 === 0 ? "booth" : "floor" },
+      });
+      if (i === 0) {
+        await updateJob(clip.id, { status: "complete", result: { mock: true } });
+        continue;
+      }
+      await updateJob(clip.id, {
+        status: "complete",
+        result: { video: { url: `https://cdn.example/clip-${i}.mp4` } },
+      });
+    }
+
+    await finalizeTurn(turn.id);
+    const ready = await getTurn(turn.id);
+    expect(ready?.generation_status).toBe("ready");
+    expect(ready?.video_segment_urls).toEqual([
+      "",
+      "https://cdn.example/clip-1.mp4",
+      "https://cdn.example/clip-2.mp4",
+      "https://cdn.example/clip-3.mp4",
+      "https://cdn.example/clip-4.mp4",
+      "https://cdn.example/clip-5.mp4",
+    ]);
+  });
 });
 
 describe("compose preparing_at", () => {
