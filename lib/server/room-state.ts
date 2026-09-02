@@ -1,5 +1,6 @@
-import { CLIP_COUNT, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS, MIN_PARTY_SIZE } from "@/lib/shared/constants";
+import { CLIP_COUNT, COMPOSE_WINDOW_MS, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS, MIN_PARTY_SIZE } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
+import { composeDeadlineMs } from "@/lib/shared/compose";
 import { isPlayableVideoUrl } from "@/lib/shared/media";
 import { isMuted } from "@/lib/shared/moderation";
 import type { ChatMessageView, PublicParticipant, QueueEntryView, RoomState, TurnView, VideoSegment } from "@/lib/shared/types";
@@ -182,7 +183,7 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
       ? {
           entryId: composing.id,
           participantId: composing.participant_id,
-          deadlineAt: new Date(new Date(composing.created_at).getTime() + 60_000).toISOString(),
+          deadlineAt: new Date(composeDeadlineMs(composing, COMPOSE_WINDOW_MS)).toISOString(),
         }
       : null,
     clock: clockFromStart(startMs, Date.now()),

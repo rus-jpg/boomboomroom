@@ -9,9 +9,11 @@ import {
   getTurn,
   insertMedia,
   listJobsForTurn,
+  listQueue,
   updateJob,
   updateMediaStorageKey,
   updateParticipant,
+  updateQueue,
   updateTurn,
 } from "@/lib/server/repo";
 import { downloadUrlToBuffer, uploadBytes } from "@/lib/server/storage";
@@ -167,6 +169,12 @@ export async function finalizeTurn(turnId: string) {
   if (music.status !== "complete" || videos.some((v) => v.status !== "complete")) {
     if (music.status === "failed" || videos.some((v) => v.status === "failed")) {
       await updateTurn(turnId, { generation_status: "failed" });
+      if (turn.kind === "dj" && turn.dj_participant_id) {
+        const q = (await listQueue(turn.room_id)).find(
+          (e) => e.participant_id === turn.dj_participant_id && e.status === "submitted",
+        );
+        if (q) await updateQueue(q.id, "skipped");
+      }
     }
     return;
   }

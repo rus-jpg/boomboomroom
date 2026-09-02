@@ -249,10 +249,17 @@ export function RoomClient({
             />
             <button
               type="button"
-              onClick={() => emit("booth:submit", { prompt, lyrics: lyrics || undefined })}
+              onClick={() => {
+                if (prompt.trim().length < 8) {
+                  setNotice("Prompt too short — need at least 8 characters.");
+                  return;
+                }
+                emit("booth:submit", { prompt, lyrics: lyrics || undefined });
+              }}
             >
               Generate the set
             </button>
+            {notice ? <p className="lede" style={{ color: "var(--amber)", marginTop: 10 }}>{notice}</p> : null}
           </div>
         </div>
       ) : null}

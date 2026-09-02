@@ -34,6 +34,7 @@ export type Database = {
           created_at: string;
           id: string;
           participant_id: string;
+          preparing_at: string | null;
           room_id: string;
           status: Database["public"]["Enums"]["queue_status"];
         };
@@ -41,6 +42,7 @@ export type Database = {
           created_at?: string;
           id?: string;
           participant_id: string;
+          preparing_at?: string | null;
           room_id: string;
           status?: Database["public"]["Enums"]["queue_status"];
         };

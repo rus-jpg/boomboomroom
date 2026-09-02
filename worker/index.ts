@@ -16,6 +16,7 @@ import {
   listGeneratingTurns,
   listQueuedJobs,
   listRunningFalJobs,
+  listRunningJobs,
   updateJob,
   updateParticipant,
 } from "@/lib/server/repo";
@@ -23,15 +24,21 @@ import { redisConnection } from "@/lib/server/redis";
 import { signedUrl, uploadBytes } from "@/lib/server/storage";
 import { ensureHouseMediaStored, finalizeTurn, ingestFalWebhook } from "./ingest";
 import { mockCharacterJpeg } from "./mock";
+import {
+  capHouseJobs,
+  createTickGate,
+  djFirst,
+  HOUSE_BACKFILL_PER_TICK,
+  HOUSE_BACKFILL_SCAN,
+  HOUSE_RECLAIM_PER_TICK,
+  payloadForMusicResubmit,
+  payloadWithSubmittedAt,
+  RECLAIM_MS,
+  resolveStaleRunningJob,
+} from "./tick";
 
-const RECLAIM_MS = 12_000;
 const FACE_SIGNED_TTL_S = 60 * 60 * 24;
-
-function houseFirst<T extends { kind: string; payload: unknown }>(jobs: T[]): T[] {
-  const house = jobs.filter((job) => isHouseJob(job));
-  const rest = jobs.filter((job) => !isHouseJob(job));
-  return [...house, ...rest];
-}
+const runTick = createTickGate();
 
 async function takeQueued(jobId: string) {
   const current = await getJob(jobId);
@@ -67,7 +74,10 @@ async function handleCharacter(jobId: string) {
         prompt: person.character_prompt,
         jobId: job.id,
       });
-  await updateJob(job.id, { fal_request_id: submitted.requestId });
+  await updateJob(job.id, {
+    fal_request_id: submitted.requestId,
+    payload: payloadWithSubmittedAt(job.payload),
+  });
 
   if (submitted.mock) {
     const svg = mockCharacterJpeg(person.display_name, person.character_prompt);
@@ -99,7 +109,10 @@ async function handleMusic(jobId: string) {
     lyrics: payload.lyrics,
     jobId: job.id,
   });
-  await updateJob(job.id, { fal_request_id: submitted.requestId });
+  await updateJob(job.id, {
+    fal_request_id: submitted.requestId,
+    payload: payloadWithSubmittedAt(job.payload),
+  });
   if (isHouse) {
     console.log(`[worker] house_bed submit ${job.id} fal=${submitted.requestId} mock=${submitted.mock}`);
   }
@@ -134,7 +147,10 @@ async function handleVideo(jobId: string) {
     referenceImageUrl: ref?.startsWith("http") ? ref : null,
     jobId: job.id,
   });
-  await updateJob(job.id, { fal_request_id: submitted.requestId });
+  await updateJob(job.id, {
+    fal_request_id: submitted.requestId,
+    payload: payloadWithSubmittedAt(job.payload),
+  });
   if (isHouse) {
     console.log(`[worker] house_clip submit ${job.id} fal=${submitted.requestId} mock=${submitted.mock}`);
   }
@@ -152,10 +168,40 @@ async function handleFinalize(turnId: string) {
   await finalizeTurn(turnId);
 }
 
+async function expireStaleRunningJobs() {
+  const jobs = await listRunningJobs();
+  for (const job of jobs) {
+    const decision = resolveStaleRunningJob(job);
+    if (decision.action === "keep") continue;
+    try {
+      if (decision.action === "resubmit") {
+        await updateJob(job.id, {
+          status: "queued",
+          fal_request_id: null,
+          error: "fal request stalled; resubmitting",
+          payload: payloadForMusicResubmit(job.payload),
+        });
+        console.log(`[worker] resubmit stale DJ music ${job.id}`);
+        continue;
+      }
+      await updateJob(job.id, {
+        status: "failed",
+        error: decision.error,
+        completed_at: new Date().toISOString(),
+      });
+      console.log(`[worker] expire stale ${job.kind}${isHouseJob(job) ? " house" : ""} ${job.id}`);
+      if (job.turn_id) await finalizeTurn(job.turn_id);
+    } catch (err) {
+      console.error(`[worker] expire ${job.id}`, err);
+    }
+  }
+}
+
 async function reclaimQueuedJobs() {
-  const jobs = houseFirst(await listQueuedJobs());
+  const jobs = capHouseJobs(djFirst(await listQueuedJobs()), HOUSE_RECLAIM_PER_TICK);
   if (!jobs.length) return;
-  console.log(`[worker] reclaiming ${jobs.length} queued job(s)`);
+  const house = jobs.filter((job) => isHouseJob(job)).length;
+  console.log(`[worker] reclaiming ${jobs.length} queued job(s) (${house} house)`);
   for (const job of jobs) {
     try {
       if (job.kind === "character") await handleCharacter(job.id);
@@ -168,13 +214,13 @@ async function reclaimQueuedJobs() {
 }
 
 async function pollRunningFalJobs() {
-  const jobs = houseFirst(await listRunningFalJobs());
+  const jobs = djFirst(await listRunningFalJobs());
   if (!jobs.length) return;
   for (const job of jobs) {
     try {
       const done = await pollFalQueue(job);
       if (!done) continue;
-      console.log(`[worker] fal ${job.id} ${done.status}${isHouseJob(job) ? " house_clip" : ""}`);
+      console.log(`[worker] fal ${job.id} ${done.status}${isHouseJob(job) ? " house" : ""}`);
       await ingestFalWebhook(job.id, done.payload, done.status);
     } catch (err) {
       console.error(`[worker] fal poll ${job.id}`, err);
@@ -194,11 +240,14 @@ async function finalizeGeneratingTurns() {
 }
 
 async function backfillHouseMedia() {
-  const jobs = await listCompleteHouseJobs();
+  const jobs = await listCompleteHouseJobs(HOUSE_BACKFILL_SCAN);
+  let stored = 0;
   for (const job of jobs) {
+    if (stored >= HOUSE_BACKFILL_PER_TICK) break;
     try {
       const added = await ensureHouseMediaStored(job);
       if (!added) continue;
+      stored += 1;
       console.log(`[worker] backfilled house media ${job.id}`);
       await hydratePlayingHouseTurn();
     } catch (err) {
@@ -207,11 +256,11 @@ async function backfillHouseMedia() {
   }
 }
 
-/** House livestream is independent of DJ music jobs. */
+/** House livestream is independent of DJ music jobs; keep it cheap so ticks stay short. */
 async function ensureHouseLivestream() {
   try {
     const spawned = await ensureHouseJobsQueued();
-    if (spawned) console.log(`[worker] queued ${spawned} house_clip job(s)`);
+    if (spawned) console.log(`[worker] queued ${spawned} house job(s)`);
     await backfillHouseMedia();
     await hydratePlayingHouseTurn();
   } catch (err) {
@@ -219,11 +268,21 @@ async function ensureHouseLivestream() {
   }
 }
 
-async function tick() {
-  await ensureHouseLivestream();
-  await reclaimQueuedJobs();
+async function tickBody() {
+  await expireStaleRunningJobs();
   await pollRunningFalJobs();
+  await reclaimQueuedJobs();
   await finalizeGeneratingTurns();
+  await ensureHouseLivestream();
+}
+
+async function tick() {
+  try {
+    const ran = await runTick(tickBody);
+    if (!ran) console.log("[worker] skip tick — previous still running");
+  } catch (err) {
+    console.error("[worker] tick failed", err);
+  }
 }
 
 async function main() {

@@ -1,11 +1,11 @@
 import {
-  COMPOSE_WINDOW_MS,
   HOUSE_AUDIO_PATH,
   MAX_PARTICIPANTS,
   TURN_DURATION_MS,
 } from "@/lib/shared/constants";
 import { ensureHouseJobsQueued, houseSetLabel, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
+import { composeDeadlineMs, isComposeWindowExpired } from "@/lib/shared/compose";
 import { isBanned, isBlockedText, isMuted, normalizeChat, takeToken, type RateBucket } from "@/lib/shared/moderation";
 import type { RoomState } from "@/lib/shared/types";
 import { CHAT_MAX_LEN, CHAT_RATE_PER_MIN } from "@/lib/shared/constants";
@@ -32,7 +32,6 @@ import {
 import { buildRoomState } from "@/lib/server/room-state";
 
 const chatBuckets = new Map<string, RateBucket>();
-const composeDeadlines = new Map<string, number>();
 
 export type EngineListener = (state: RoomState) => void;
 
@@ -47,6 +46,7 @@ export class RoomEngine {
   }
 
   async start() {
+    await this.expireComposeWindows();
     await this.ensureHousePlaying();
     this.timer = setInterval(() => {
       void this.tick();
@@ -58,12 +58,7 @@ export class RoomEngine {
   }
 
   async snapshot(): Promise<RoomState> {
-    const state = await buildRoomState();
-    if (state.compose) {
-      const deadline = composeDeadlines.get(state.compose.entryId);
-      if (deadline) state.compose.deadlineAt = new Date(deadline).toISOString();
-    }
-    return state;
+    return buildRoomState();
   }
 
   async emit() {
@@ -76,8 +71,8 @@ export class RoomEngine {
   private async tick() {
     try {
       await this.advancePlayback();
-      await this.promoteComposer();
       await this.expireComposeWindows();
+      await this.promoteComposer();
       await this.emit();
     } catch (err) {
       console.error("[engine] tick failed", err);
@@ -178,7 +173,6 @@ export class RoomEngine {
     const next = queue.find((q) => q.status === "waiting");
     if (!next) return;
     await updateQueue(next.id, "preparing");
-    composeDeadlines.set(next.id, Date.now() + COMPOSE_WINDOW_MS);
     const person = await getParticipant(next.participant_id);
     await insertChat({
       roomId: room.id,
@@ -192,10 +186,8 @@ export class RoomEngine {
     const room = await getRoomBySlug();
     const queue = await listQueue(room.id);
     for (const entry of queue.filter((q) => q.status === "preparing")) {
-      const deadline = composeDeadlines.get(entry.id) ?? new Date(entry.created_at).getTime() + COMPOSE_WINDOW_MS;
-      if (Date.now() < deadline) continue;
+      if (!isComposeWindowExpired(entry)) continue;
       await updateQueue(entry.id, "skipped");
-      composeDeadlines.delete(entry.id);
       await insertChat({
         roomId: room.id,
         participantId: null,
@@ -244,7 +236,6 @@ export class RoomEngine {
       generationStatus: "generating",
     });
     await updateQueue(entry.id, "submitted");
-    composeDeadlines.delete(entry.id);
 
     const musicJob = await insertJob({
       kind: "music",
@@ -338,8 +329,7 @@ export class RoomEngine {
 }
 
 export async function getComposeDeadline(entryId: string): Promise<number | undefined> {
-  if (composeDeadlines.has(entryId)) return composeDeadlines.get(entryId);
   const entry = await getQueueEntry(entryId);
   if (!entry) return undefined;
-  return new Date(entry.created_at).getTime() + COMPOSE_WINDOW_MS;
+  return composeDeadlineMs(entry);
 }
