@@ -1,9 +1,9 @@
 "use client";
 
 import { io, type Socket } from "socket.io-client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { HOUSE_AUDIO_PATH, PRODUCT_NAME } from "@/lib/shared/constants";
+import { HOUSE_AUDIO_PATH, PRODUCT_NAME, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { CastForm } from "./CastForm";
@@ -56,10 +56,34 @@ function demoState(name: string): RoomState {
     queue: [],
     chat: [
       {
+        id: "sys-old",
+        participantId: null,
+        displayName: "Room",
+        body: "House takes the booth.",
+        kind: "system",
+        createdAt: new Date(start - 20_000).toISOString(),
+      },
+      {
+        id: "u1",
+        participantId: "p-3",
+        displayName: "Neon Fox",
+        body: "this bass is illegal",
+        kind: "chat",
+        createdAt: new Date(start - 12_000).toISOString(),
+      },
+      {
+        id: "u2",
+        participantId: "dj-1",
+        displayName: "Velvet",
+        body: "locking a prompt, hold on",
+        kind: "chat",
+        createdAt: new Date(start - 8_000).toISOString(),
+      },
+      {
         id: "sys",
         participantId: null,
         displayName: "Room",
-        body: "Demo booth is live. House is holding the floor.",
+        body: "Velvet takes the booth.",
         kind: "system",
         createdAt: new Date().toISOString(),
       },
@@ -99,6 +123,9 @@ export function RoomClient({
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(initial.clock.serverNow);
   const socketRef = useRef<Socket | null>(null);
+  const [sessionGone, setSessionGone] = useState(false);
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -145,15 +172,26 @@ export function RoomClient({
     return clockFromStart(start, now);
   }, [state.currentTurn, now]);
 
-  const myStatus = session
-    ? (state.participants.find((p) => p.id === session.participantId)?.status ?? session.status)
+  const liveSession = sessionGone ? null : session;
+  const guest = !liveSession;
+  const myStatus = liveSession
+    ? (state.participants.find((p) => p.id === liveSession.participantId)?.status ?? liveSession.status)
     : null;
-  const myCompose = Boolean(session && state.compose?.participantId === session.participantId);
+  const myCompose = Boolean(liveSession && state.compose?.participantId === liveSession.participantId);
   const composeLeft = state.compose
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
-  const inQueue = Boolean(session && state.queue.some((q) => q.participantId === session.participantId));
-  const guest = !session;
+  const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
+
+  useEffect(() => {
+    if (session?.participantId) setSessionGone(false);
+  }, [session?.participantId]);
+
+  useLayoutEffect(() => {
+    const el = chatLogRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [state.chat]);
 
   function emit(event: string, payload?: unknown) {
     const socket = socketRef.current;
@@ -166,18 +204,41 @@ export function RoomClient({
     });
   }
 
+  async function exitRoom() {
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      await new Promise<void>((resolve) => {
+        const t = window.setTimeout(resolve, 800);
+        socket.emit("room:leave", () => {
+          window.clearTimeout(t);
+          resolve();
+        });
+      });
+      socket.disconnect();
+    }
+    await fetch("/api/session", { method: "DELETE" }).catch(() => undefined);
+    setSessionGone(true);
+  }
+
   return (
     <>
       <div className="room-shell" inert={guest || undefined}>
       <header className="room-header">
         <strong className="display">{PRODUCT_NAME}</strong>
-        <span className="pill">
-          {state.occupancy}/{state.maxOccupancy}
-          {state.mockMode ? " · mock gen" : ""}
-          {!socketReady ? " · house clock" : ""}
-        </span>
+        <div className="room-header-actions">
+          <span className="pill">
+            {state.occupancy}/{state.maxOccupancy}
+            {state.mockMode ? " · mock gen" : ""}
+            {!socketReady ? " · house clock" : ""}
+          </span>
+          {!guest ? (
+            <button className="exit-room" type="button" onClick={() => void exitRoom()}>
+              Exit room
+            </button>
+          ) : null}
+        </div>
       </header>
-      <Stage turn={state.currentTurn} clock={clock} />
+      <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} />
       <div className="room-body">
         <section className="panel">
           <h2>Booth queue</h2>
@@ -244,10 +305,18 @@ export function RoomClient({
         </section>
         <section className="panel">
           <h2>Open chat</h2>
-          <div className="chat-log">
+          <div
+            className="chat-log"
+            ref={chatLogRef}
+            onScroll={() => {
+              const el = chatLogRef.current;
+              if (!el) return;
+              stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96;
+            }}
+          >
             {state.chat.slice(-40).map((m) => (
-              <div className="chat-line" key={m.id}>
-                <strong>{m.displayName}</strong>
+              <div className={`chat-line${m.kind === "system" ? " is-system" : ""}`} key={m.id}>
+                {m.kind === "system" ? <span className="chat-sys-label">Room</span> : <strong>{m.displayName}</strong>}
                 <span>{m.body}</span>
               </div>
             ))}
@@ -310,7 +379,7 @@ export function RoomClient({
         </div>
       ) : null}
 
-      {session?.banned ? (
+      {session?.banned && !guest ? (
         <div className="processing">
           <div>
             <h2 className="display">You're out</h2>
@@ -329,7 +398,13 @@ export function RoomClient({
       </div>
       {guest ? (
         <div className="cast-modal" role="dialog" aria-modal="true" aria-labelledby="cast-title">
-          <CastForm onCast={() => router.refresh()} />
+          <CastForm
+            onCast={() => {
+              window.dispatchEvent(new Event(UNLOCK_AUDIO_EVENT));
+              setSessionGone(false);
+              router.refresh();
+            }}
+          />
         </div>
       ) : null}
     </>

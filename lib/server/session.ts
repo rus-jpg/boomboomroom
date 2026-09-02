@@ -22,6 +22,17 @@ export async function writeSessionCookie(token: string) {
   });
 }
 
+export async function clearSessionCookie() {
+  const jar = await cookies();
+  jar.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+}
+
 export async function currentSession(): Promise<SessionView | null> {
   const token = await readSessionToken();
   if (!token) return null;

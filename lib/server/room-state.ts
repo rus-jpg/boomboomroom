@@ -14,6 +14,7 @@ import {
   listPresence,
   listQueue,
   listResidents,
+  listJobsForTurn,
   nextReadyDjTurn,
 } from "./repo";
 import { signedUrl } from "./storage";
@@ -62,16 +63,38 @@ async function toTurnView(turn: Awaited<ReturnType<typeof latestPlayingTurn>>): 
   if (!turn) return null;
   const dj = turn.dj_participant_id ? await getParticipant(turn.dj_participant_id) : null;
   const rawVideos = asStringArray(turn.video_segment_urls).filter((url) => isPlayableVideoUrl(url));
+  const featuredByIndex = new Map<number, { participantId: string | null; displayName: string | null }>();
+  if (turn.kind === "dj") {
+    const jobs = await listJobsForTurn(turn.id);
+    const videos = jobs
+      .filter((job) => job.kind === "video")
+      .sort((a, b) => {
+        const ai = Number((a.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
+        const bi = Number((b.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
+        return ai - bi;
+      });
+    const ids = [...new Set(videos.map((job) => job.participant_id).filter((id): id is string => Boolean(id)))];
+    const people = await listParticipantsByIds(ids);
+    const byId = new Map(people.map((p) => [p.id, p]));
+    for (const [i, job] of videos.entries()) {
+      const person = job.participant_id ? byId.get(job.participant_id) : null;
+      featuredByIndex.set(i, {
+        participantId: person?.id ?? job.participant_id ?? null,
+        displayName: person?.display_name ?? null,
+      });
+    }
+  }
   const segments: VideoSegment[] = [];
   if (rawVideos.length === 0) {
     segments.push(...emptySegments());
   } else {
     for (let i = 0; i < CLIP_COUNT; i++) {
       const resolved = await resolveUrl(rawVideos[i % rawVideos.length]);
+      const meta = featuredByIndex.get(i);
       segments.push({
         url: resolved ?? "",
-        participantId: null,
-        displayName: null,
+        participantId: meta?.participantId ?? null,
+        displayName: meta?.displayName ?? null,
       });
     }
   }

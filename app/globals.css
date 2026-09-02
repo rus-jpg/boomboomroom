@@ -274,6 +274,24 @@ textarea { min-height: 120px; resize: vertical; }
   padding: 6px 12px;
   flex: none;
 }
+.room-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.exit-room {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.exit-room:hover {
+  border-color: var(--hot);
+  color: #fff;
+}
 .stage-wrap {
   position: relative;
   aspect-ratio: 16 / 9;
@@ -326,6 +344,11 @@ textarea { min-height: 120px; resize: vertical; }
   padding: 16px;
   pointer-events: none;
 }
+.hud-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .pill {
   pointer-events: auto;
   background: var(--glass);
@@ -336,6 +359,38 @@ textarea { min-height: 120px; resize: vertical; }
   font-size: 12px;
 }
 .now-playing { max-width: 56%; }
+.audio-chip {
+  cursor: pointer;
+  color: var(--amber);
+}
+.enter-party {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 0;
+  background: rgba(5, 5, 8, 0.58);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: center;
+  padding: 24px;
+}
+.enter-party .eyebrow {
+  margin: 0;
+}
+.enter-party strong {
+  font-size: clamp(36px, 7vw, 72px);
+  line-height: 0.9;
+}
+.enter-party span:last-child {
+  color: var(--amber);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
 
 .room-body {
   display: grid;
@@ -374,6 +429,29 @@ textarea { min-height: 120px; resize: vertical; }
   align-items: center;
   padding: 5px 0;
   border-bottom: 1px solid var(--line);
+}
+.chat-line strong {
+  font-weight: 650;
+}
+.chat-line.is-system {
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom-color: rgba(246, 239, 230, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.chat-line.is-system .chat-sys-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(183, 168, 154, 0.72);
+}
+.chat-line.is-system span:last-child {
+  color: var(--muted);
 }
 .people-grid {
   display: grid;

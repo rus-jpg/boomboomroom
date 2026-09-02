@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CLIP_COUNT } from "@/lib/shared/constants";
 import { houseClipPrompt, houseMusicPrompt } from "@/lib/shared/house-prompt";
 import { isPlayableAudioUrl, isPlayableVideoUrl, isStubHouseAudio, isStubHouseVideo } from "@/lib/shared/media";
+import { assignHouseClip, type CastFace } from "@/lib/shared/stage-cast";
 import { enqueueMusic, enqueueVideo, hasRedis, publishRoomEvent } from "./queues";
 import {
   claimUnusedHouseAudio,
@@ -14,7 +15,7 @@ import {
   listInflightHouseMusicJobs,
   listInflightHouseVideoJobs,
   listMediaByKind,
-  listReadyParticipants,
+  listPresentReadyParticipants,
   listResidents,
   listUnusedHouseClips,
   updateTurn,
@@ -35,12 +36,31 @@ export function isHouseJob(job: { kind: string; payload: unknown; turn_id?: stri
   return (job.payload as { house?: boolean } | null)?.house === true;
 }
 
-async function houseReferenceRoster() {
-  const ready = await listReadyParticipants();
-  const withRef = ready.filter((p) => p.character_reference_url);
-  const residents = withRef.filter((p) => p.is_resident);
-  const humans = withRef.filter((p) => !p.is_resident);
-  return residents.length || humans.length ? [...residents, ...humans] : withRef;
+function asFace(p: {
+  id: string;
+  display_name: string;
+  character_prompt: string;
+  character_reference_url: string | null;
+  is_resident?: boolean;
+}): CastFace {
+  return {
+    id: p.id,
+    display_name: p.display_name,
+    character_prompt: p.character_prompt,
+    character_reference_url: p.character_reference_url,
+    is_resident: Boolean(p.is_resident),
+  };
+}
+
+/** Ready humans currently in the room dance; only residents may hold the house booth. */
+async function houseCastRoster(): Promise<{ dancers: CastFace[]; residents: CastFace[] }> {
+  const room = await getRoomBySlug();
+  const [present, residents] = await Promise.all([listPresentReadyParticipants(room.id), listResidents()]);
+  const withRef = <T extends { character_reference_url: string | null; status: string }>(p: T) =>
+    Boolean(p.character_reference_url) && p.status === "ready";
+  const dancers = present.filter((p) => withRef(p) && !p.is_resident).map(asFace);
+  const residentFaces = residents.filter(withRef).map(asFace);
+  return { dancers, residents: residentFaces };
 }
 
 /** Unused clips first (consumed), then replay any H3 Max house clip. Never stubs if any real clip exists. */
@@ -93,12 +113,13 @@ async function ensureHouseVideoJobsQueued(): Promise<number> {
   need = Math.min(need, Math.max(0, MAX_INFLIGHT - inflight.length));
   if (need <= 0) return 0;
 
-  const roster = await houseReferenceRoster();
+  const { dancers, residents } = await houseCastRoster();
   const batchId = randomUUID();
   const seqBase = Date.now();
 
   for (let i = 0; i < need; i++) {
-    const featured = roster.length ? roster[(unused + inflight.length + i) % roster.length] : null;
+    const seq = seqBase + i;
+    const { role, person: featured } = assignHouseClip(seq, dancers, residents);
     const job = await insertJob({
       kind: "video",
       turnId: null,
@@ -108,12 +129,15 @@ async function ensureHouseVideoJobsQueued(): Promise<number> {
         house_clip: true,
         batchId,
         clipIndex: i,
-        seq: seqBase + i,
-        prompt: houseClipPrompt(seqBase + i, featured),
+        seq,
+        role,
+        prompt: houseClipPrompt(seq, featured, role),
         referenceImageUrl: featured?.character_reference_url ?? null,
       },
     });
-    console.log(`[house] house_clip queued ${job.id} seq=${seqBase + i} face=${featured?.display_name ?? "crowd"}`);
+    console.log(
+      `[house] house_clip queued ${job.id} seq=${seq} role=${role} face=${featured?.display_name ?? (role === "dj" ? "anon-booth" : "crowd")}`,
+    );
     if (hasRedis()) {
       try {
         await enqueueVideo(job.id, "house", i);

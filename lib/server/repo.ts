@@ -123,6 +123,13 @@ export async function listReadyParticipants(): Promise<Participant[]> {
   return readStore().participants.filter((p) => p.status === "ready");
 }
 
+/** Ready people who currently have a socket in the room (humans on the floor). */
+export async function listPresentReadyParticipants(roomId: string): Promise<Participant[]> {
+  const [ready, presence] = await Promise.all([listReadyParticipants(), listPresence(roomId)]);
+  const present = new Set(presence.map((row) => row.participant_id).filter((id): id is string => Boolean(id)));
+  return ready.filter((person) => present.has(person.id));
+}
+
 export async function listResidents(): Promise<Participant[]> {
   if (useRemote()) {
     const { data } = await supabaseAdmin().from("participants").select("*").eq("is_resident", true).order("joined_at", { ascending: true });
@@ -285,6 +292,30 @@ export async function removePresence(socketId: string) {
   writeStore(store);
 }
 
+export async function removePresenceByParticipant(participantId: string) {
+  if (useRemote()) {
+    await supabaseAdmin().from("room_presence").delete().eq("participant_id", participantId);
+    return;
+  }
+  const store = readStore();
+  store.presence = store.presence.filter((p) => p.participant_id !== participantId);
+  writeStore(store);
+}
+
+/** Human session leaves: drop presence + booth queue. Residents stay. */
+export async function leaveRoomSession(participantId: string) {
+  const person = await getParticipant(participantId);
+  if (!person) return;
+  if (person.is_resident) throw new Error("residents stay in the house");
+  const room = await getRoomBySlug();
+  await leaveQueue(room.id, participantId);
+  await removePresenceByParticipant(participantId);
+  await updateParticipant(participantId, {
+    session_token_hash: `left:${participantId}`,
+    last_seen_at: nowIso(),
+  });
+}
+
 export async function listPresence(roomId: string): Promise<Presence[]> {
   if (useRemote()) {
     const { data } = await supabaseAdmin().from("room_presence").select("*").eq("room_id", roomId);
@@ -322,6 +353,14 @@ export async function insertChat(input: {
   store.chat.push(row);
   writeStore(store);
   return row;
+}
+
+/** System line with consecutive-body dedupe so house notices cannot double-post. */
+export async function insertSystemChat(input: { roomId: string; body: string }): Promise<Chat> {
+  const recent = await listChat(input.roomId, 8);
+  const last = recent[recent.length - 1];
+  if (last?.kind === "system" && last.body === input.body) return last;
+  return insertChat({ roomId: input.roomId, participantId: null, body: input.body, kind: "system" });
 }
 
 export async function listChat(roomId: string, limit = 80): Promise<Chat[]> {
@@ -408,8 +447,9 @@ export async function updateQueue(id: string, status: QueueEntry["status"]): Pro
 }
 
 export async function leaveQueue(roomId: string, participantId: string) {
+  const droppable = new Set(["waiting", "preparing", "submitted"]);
   const rows = (await listQueue(roomId)).filter(
-    (q) => q.participant_id === participantId && (q.status === "waiting" || q.status === "preparing"),
+    (q) => q.participant_id === participantId && droppable.has(q.status),
   );
   for (const row of rows) {
     await updateQueue(row.id, "skipped");

@@ -145,6 +145,17 @@ async function main() {
       }
     });
 
+    socket.on("room:leave", async (ack?: (r: { ok: boolean; error?: string }) => void) => {
+      try {
+        await engine.leaveRoom(participantId);
+        await engine.emit();
+        ack?.({ ok: true });
+        socket.disconnect(true);
+      } catch (err) {
+        ack?.({ ok: false, error: err instanceof Error ? err.message : "leave failed" });
+      }
+    });
+
     socket.on(
       "booth:submit",
       async (payload: { prompt?: string; lyrics?: string }, ack?: (r: { ok: boolean; error?: string }) => void) => {

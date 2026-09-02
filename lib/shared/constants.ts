@@ -11,6 +11,7 @@ export const MIN_PARTY_SIZE = 5;
 
 export const SESSION_COOKIE = "bbr_session";
 export const SESSION_TTL_DAYS = 30;
+export const UNLOCK_AUDIO_EVENT = "bbr:unlock-audio";
 
 export const MUSIC_MODEL = "minimax/music-3";
 export const VIDEO_MODEL = "minimax/h3-max/reference-to-video";
