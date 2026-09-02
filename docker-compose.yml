@@ -1,0 +1,47 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  realtime:
+    build: .
+    command: npm run start:realtime
+    env_file:
+      - .env
+    environment:
+      PORT: "4000"
+      REALTIME_PORT: "4000"
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    command: npm run start:worker
+    env_file:
+      - .env
+    environment:
+      PORT: "4100"
+      HEALTH_PORT: "4100"
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4100:4100"
+    depends_on:
+      - redis
+
+  web:
+    build: .
+    command: npm run dev
+    env_file:
+      - .env
+    environment:
+      PORT: "3000"
+      NEXT_PUBLIC_REALTIME_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - realtime
+      - worker
