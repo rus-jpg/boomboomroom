@@ -2,6 +2,12 @@ import { fal } from "@fal-ai/client";
 import { MUSIC_MODEL, VIDEO_ASPECT, VIDEO_DURATION_S, VIDEO_MODEL, VIDEO_RESOLUTION } from "@/lib/shared/constants";
 import { characterModel, isMockMode, webhookBaseUrl } from "./env";
 
+export function falEndpointForKind(kind: "character" | "music" | "video"): string {
+  if (kind === "character") return characterModel();
+  if (kind === "music") return MUSIC_MODEL;
+  return VIDEO_MODEL;
+}
+
 function configureFal() {
   if (process.env.FAL_KEY) {
     fal.config({ credentials: process.env.FAL_KEY });
@@ -83,8 +89,16 @@ export function extractImageUrl(payload: unknown): string | null {
     images?: { url?: string }[];
     image?: { url?: string };
     payload?: { images?: { url?: string }[] };
+    data?: { images?: { url?: string }[]; image?: { url?: string } };
   };
-  return p?.images?.[0]?.url || p?.image?.url || p?.payload?.images?.[0]?.url || null;
+  return (
+    p?.images?.[0]?.url ||
+    p?.image?.url ||
+    p?.payload?.images?.[0]?.url ||
+    p?.data?.images?.[0]?.url ||
+    p?.data?.image?.url ||
+    null
+  );
 }
 
 export function extractVideoUrl(payload: unknown): string | null {
@@ -99,4 +113,33 @@ export function extractDurationS(payload: unknown): number | null {
   const p = payload as { duration?: number; payload?: { duration?: number } };
   const d = p?.duration ?? p?.payload?.duration;
   return typeof d === "number" ? d : null;
+}
+
+/** Poll fal queue. Returns ingest payload when finished, or null if still running. */
+export async function pollFalQueue(job: {
+  kind: "character" | "music" | "video";
+  fal_request_id: string | null;
+}): Promise<{ status: "OK" | "ERROR"; payload: unknown } | null> {
+  const requestId = job.fal_request_id;
+  if (!requestId || requestId.startsWith("mock-") || isMockMode()) return null;
+  configureFal();
+  const endpoint = falEndpointForKind(job.kind);
+  let st: { status?: string };
+  try {
+    st = await fal.queue.status(endpoint, { requestId });
+  } catch (err) {
+    console.warn(`[fal] status ${requestId}`, err);
+    return null;
+  }
+  if (st.status === "IN_QUEUE" || st.status === "IN_PROGRESS") return null;
+  if (st.status !== "COMPLETED") {
+    return { status: "ERROR", payload: st };
+  }
+  try {
+    const result = await fal.queue.result(endpoint, { requestId });
+    return { status: "OK", payload: result.data ?? result };
+  } catch (err) {
+    console.warn(`[fal] result ${requestId}`, err);
+    return { status: "ERROR", payload: { error: err instanceof Error ? err.message : String(err) } };
+  }
 }
