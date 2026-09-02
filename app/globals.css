@@ -274,9 +274,9 @@ textarea { min-height: 120px; resize: vertical; }
   z-index: 12;
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 12px 14px 28px;
-  background: linear-gradient(to bottom, rgba(5, 5, 8, 0.78), rgba(5, 5, 8, 0.28) 55%, transparent);
+  align-items: flex-start;
+  padding: 14px 16px;
+  background: none;
   pointer-events: none;
 }
 .room-header .display {
@@ -325,10 +325,10 @@ textarea { min-height: 120px; resize: vertical; }
 .stage-fallback {
   z-index: 0;
   background:
-    radial-gradient(42% 48% at 18% 28%, rgba(94, 231, 255, 0.2), transparent 58%),
-    radial-gradient(40% 42% at 82% 62%, rgba(255, 176, 32, 0.16), transparent 55%),
-    radial-gradient(28% 32% at 52% 78%, rgba(168, 85, 247, 0.18), transparent 52%),
-    linear-gradient(120deg, #0a0810, #071018);
+    radial-gradient(48% 52% at 16% 18%, rgba(94, 231, 255, 0.42), transparent 58%),
+    radial-gradient(46% 48% at 84% 58%, rgba(255, 176, 32, 0.32), transparent 55%),
+    radial-gradient(34% 38% at 52% 82%, rgba(168, 85, 247, 0.32), transparent 52%),
+    linear-gradient(120deg, #1a1020, #0b1524);
   animation: club-breathe 7s ease-in-out infinite;
 }
 @keyframes club-breathe {
@@ -336,10 +336,20 @@ textarea { min-height: 120px; resize: vertical; }
   50% { filter: saturate(1.15) brightness(1.08); }
 }
 .stage-wrap video { z-index: 1; }
-.stage-warming {
+.stage-wrap::after {
+  content: "";
   position: absolute;
   inset: 0;
   z-index: 2;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, rgba(5, 5, 8, 0.42) 0%, transparent 22%),
+    linear-gradient(to top, rgba(5, 5, 8, 0.72) 0%, rgba(5, 5, 8, 0.28) 28%, transparent 52%);
+}
+.stage-warming {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   display: grid;
   place-items: center;
   pointer-events: none;
@@ -349,14 +359,14 @@ textarea { min-height: 120px; resize: vertical; }
   color: rgba(255, 255, 255, 0.72);
   text-shadow: 0 0 18px rgba(94, 231, 255, 0.35);
 }
-.stage-wrap .hud { z-index: 3; }
+.stage-wrap .hud { z-index: 4; }
 .hud {
   position: absolute;
   inset: 0;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 64px 16px 16px;
+  padding: 56px 16px 16px;
   pointer-events: none;
 }
 .hud-right {
@@ -416,21 +426,19 @@ textarea { min-height: 120px; resize: vertical; }
   display: grid;
   grid-template-columns: 280px 1fr 320px;
   gap: 8px;
-  padding: 56px 8px 10px;
-  height: min(36vh, 340px);
-  min-height: 220px;
+  padding: 88px 10px 12px;
+  height: min(42vh, 400px);
+  min-height: 240px;
   overflow: hidden;
   background: linear-gradient(
     to top,
-    rgba(5, 5, 8, 0.94) 0%,
-    rgba(5, 5, 8, 0.72) 42%,
-    rgba(5, 5, 8, 0.28) 78%,
+    rgba(5, 5, 8, 0.82) 0%,
+    rgba(5, 5, 8, 0.42) 48%,
     transparent 100%
   );
-  mask-image: linear-gradient(to top, #000 72%, rgba(0, 0, 0, 0.55) 90%, transparent 100%);
 }
 .panel {
-  background: rgba(10, 8, 14, 0.46);
+  background: rgba(10, 8, 14, 0.34);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 8px 10px;
@@ -438,7 +446,7 @@ textarea { min-height: 120px; resize: vertical; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(18px);
 }
 .panel h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); flex: none; }
 .panel .lede {

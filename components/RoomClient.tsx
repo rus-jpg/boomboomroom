@@ -90,14 +90,6 @@ function demoState(name: string): RoomState {
     ],
     chat: [
       {
-        id: "sys-old",
-        participantId: null,
-        displayName: "Room",
-        body: "House takes the booth.",
-        kind: "system",
-        createdAt: new Date(start - 20_000).toISOString(),
-      },
-      {
         id: "u1",
         participantId: "p-3",
         displayName: "Neon Fox",
