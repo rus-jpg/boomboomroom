@@ -49,8 +49,8 @@ function demoState(name: string): RoomState {
       id: p.id,
       displayName: p.displayName,
       characterPrompt: "demo",
-      characterUrl: demoPortrait(p.hue),
-      status: "ready" as const,
+      characterUrl: p.id === "p-7" ? null : demoPortrait(p.hue),
+      status: p.id === "p-7" ? ("processing" as const) : ("ready" as const),
       muted: p.muted,
       isDj: p.isDj,
       isResident: p.isResident,
@@ -133,6 +133,13 @@ function demoState(name: string): RoomState {
   };
 }
 
+function nowPlayingLabel(turn: RoomState["currentTurn"]): string {
+  if (turn?.kind === "dj" && turn.dj) {
+    return `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`;
+  }
+  return turn?.musicPrompt ?? "House buffer · midnight basement disco";
+}
+
 export function RoomClient({
   initial,
   session,
@@ -144,7 +151,6 @@ export function RoomClient({
 }) {
   const router = useRouter();
   const [state, setState] = useState(initial);
-  const [socketReady, setSocketReady] = useState(false);
   const [chat, setChat] = useState("");
   const [prompt, setPrompt] = useState("");
   const [lyrics, setLyrics] = useState("");
@@ -183,7 +189,6 @@ export function RoomClient({
         auth: { ticket: ticketRes.ticket },
       });
       socketRef.current = socket;
-      socket.on("connect", () => setSocketReady(true));
       socket.on("connect_error", () => {
         setNotice("Realtime offline — house demo is holding.");
         setState((s) => ({ ...s, mockMode: true }));
@@ -213,7 +218,7 @@ export function RoomClient({
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
     : 0;
   const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
-  const gateUp = guest || myStatus === "processing";
+  const gateUp = guest;
   const chatLines = useMemo(() => mergeChat(state.chat, optimisticChat).slice(-40), [state.chat, optimisticChat]);
 
   useEffect(() => {
@@ -314,16 +319,14 @@ export function RoomClient({
       <Stage turn={state.currentTurn} clock={clock} allowEnterOverlay={!guest} dormant={gateUp} />
       <div className="stage-bottom-fade" aria-hidden />
       <header className="room-header">
-        <strong className="display">{PRODUCT_NAME}</strong>
+        <div className="room-brand">
+          <strong className="display">{PRODUCT_NAME}</strong>
+          <p className="room-set display">{nowPlayingLabel(state.currentTurn)}</p>
+        </div>
         <div className="room-header-actions">
-          <span className="pill">
-            {state.occupancy}/{state.maxOccupancy}
-            {state.mockMode ? " · mock gen" : ""}
-            {!socketReady ? " · house clock" : ""}
-          </span>
           {!guest ? (
-            <button className="exit-room" type="button" onClick={() => void exitRoom()}>
-              Exit room
+            <button className="exit-sign" type="button" onClick={() => void exitRoom()} aria-label="Exit room">
+              EXIT
             </button>
           ) : null}
         </div>
@@ -366,14 +369,16 @@ export function RoomClient({
           <div className="panel-scroll">
             <div className="people-grid">
               {state.participants.map((p) => {
+                const creating = p.status === "processing";
                 const cues = [
+                  creating ? "creating" : null,
                   p.isResident ? "Resident" : null,
                   p.isDj ? "booth" : null,
                   p.muted ? "muted" : null,
                 ].filter(Boolean);
                 return (
                   <article
-                    className={`person-tile${p.isDj ? " is-dj" : ""}${p.muted ? " is-muted" : ""}`}
+                    className={`person-tile${p.isDj ? " is-dj" : ""}${p.muted ? " is-muted" : ""}${creating ? " is-creating" : ""}`}
                     key={p.id}
                     title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
                   >
@@ -384,10 +389,14 @@ export function RoomClient({
                       ) : (
                         <div className="avatar" aria-hidden />
                       )}
+                      {creating ? <span className="person-spinner" aria-hidden /> : null}
                     </div>
                     <strong className="person-name">{p.displayName}</strong>
-                    {p.isResident ? <span className="person-resident">Resident</span> : null}
-                    {p.isDj || p.muted ? (
+                    {creating ? (
+                      <span className="person-creating">Creating…</span>
+                    ) : p.isResident ? (
+                      <span className="person-resident">Resident</span>
+                    ) : p.isDj || p.muted ? (
                       <span className="person-meta">
                         {p.isDj ? "booth" : null}
                         {p.isDj && p.muted ? " · " : null}
@@ -401,7 +410,18 @@ export function RoomClient({
           </div>
         </section>
         <section className="panel">
-          <h2>Open chat</h2>
+          <h2 className="panel-heading">
+            Open chat
+            <span className="chat-occupancy" title={`${state.occupancy} of ${state.maxOccupancy} in the room`}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm0 2c-4.4 0-8 2.1-8 4.7V21h16v-2.3c0-2.6-3.6-4.7-8-4.7Z"
+                />
+              </svg>
+              {state.occupancy}/{state.maxOccupancy}
+            </span>
+          </h2>
           <div
             className="chat-log"
             ref={chatLogRef}
@@ -436,16 +456,6 @@ export function RoomClient({
           {chatError ? <p className="chat-error">{chatError}</p> : null}
         </section>
       </div>
-
-      {myStatus === "processing" ? (
-        <div className="processing">
-          <GateBackdrop />
-          <div className="processing-copy">
-            <h2 className="display">Creating your character</h2>
-            <p>You'll be let in shortly.</p>
-          </div>
-        </div>
-      ) : null}
 
       {myCompose ? (
         <div className="booth">

@@ -25,7 +25,7 @@ export function Stage({
   turn: TurnView | null;
   clock: ClockSnapshot;
   allowEnterOverlay?: boolean;
-  /** Pause live seeking so Entrance / creating can sit on a static loop instead. */
+  /** Pause live seeking so Entrance can sit on a static loop instead. */
   dormant?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -305,29 +305,17 @@ export function Stage({
         }}
         onPause={() => setAudioPaused(true)}
       />
-      {dormant ? null : (
+      {dormant ? null : allowEnterOverlay && audioGate === "live" && audioPaused ? (
         <div className="hud">
-          <div className="pill now-playing">
-            {turn?.kind === "dj" && turn.dj
-              ? `${turn.dj.displayName} · ${turn.musicPrompt ?? "live set"}`
-              : turn?.musicPrompt ?? "House buffer · midnight basement disco"}
-          </div>
-          <div className="hud-right">
-            {allowEnterOverlay && audioGate === "live" && audioPaused ? (
-              <button
-                className="pill audio-chip"
-                type="button"
-                onClick={() => void tryStartAudioRef.current()}
-              >
-                Unmute
-              </button>
-            ) : null}
-            <div className="pill">
-              {String(1 + clipIndex).padStart(2, "0")} / 06 · {(clock.audioOffsetMs / 1000).toFixed(1)}s
-            </div>
-          </div>
+          <button
+            className="pill audio-chip"
+            type="button"
+            onClick={() => void tryStartAudioRef.current()}
+          >
+            Unmute
+          </button>
         </div>
-      )}
+      ) : null}
       {allowEnterOverlay && !dormant && audioGate === "blocked" ? (
         <button
           className="enter-party"
