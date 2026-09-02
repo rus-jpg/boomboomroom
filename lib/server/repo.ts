@@ -372,6 +372,7 @@ export async function enqueueDj(roomId: string, participantId: string): Promise<
     room_id: roomId,
     participant_id: participantId,
     status: "waiting",
+    preparing_at: null,
     created_at: nowIso(),
   };
   if (useRemote()) {
@@ -386,10 +387,12 @@ export async function enqueueDj(roomId: string, participantId: string): Promise<
 }
 
 export async function updateQueue(id: string, status: QueueEntry["status"]): Promise<QueueEntry> {
+  const patch: Partial<QueueEntry> = { status };
+  if (status === "preparing") patch.preparing_at = nowIso();
   if (useRemote()) {
     const { data, error } = await supabaseAdmin()
       .from("dj_queue_entries")
-      .update({ status })
+      .update(patch)
       .eq("id", id)
       .select("*")
       .single();
@@ -399,7 +402,7 @@ export async function updateQueue(id: string, status: QueueEntry["status"]): Pro
   const store = readStore();
   const idx = store.queue.findIndex((q) => q.id === id);
   if (idx < 0) throw new Error("queue missing");
-  store.queue[idx] = { ...store.queue[idx], status };
+  store.queue[idx] = { ...store.queue[idx], ...patch };
   writeStore(store);
   return store.queue[idx];
 }

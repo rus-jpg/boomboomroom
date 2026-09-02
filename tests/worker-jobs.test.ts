@@ -99,3 +99,21 @@ describe("finalizeTurn after stale music", () => {
     expect((await getQueueEntry(entry.id))?.status).toBe("skipped");
   });
 });
+
+describe("compose preparing_at", () => {
+  it("stamps preparing_at when the booth is promoted", async () => {
+    const room = await getRoomBySlug();
+    const person = await createParticipant({
+      sessionHash: "s3",
+      displayName: "Mira",
+      characterPrompt: "magenta lasers and a silver chain",
+      ipHash: null,
+    });
+    const waiting = await enqueueDj(room.id, person.id);
+    expect(waiting.preparing_at).toBeNull();
+    const preparing = await updateQueue(waiting.id, "preparing");
+    expect(preparing.status).toBe("preparing");
+    expect(preparing.preparing_at).toBeTruthy();
+    expect(Date.parse(preparing.preparing_at!)).toBeGreaterThanOrEqual(Date.parse(waiting.created_at));
+  });
+});
