@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { HOUSE_AUDIO_PATH, PRODUCT_NAME, UNLOCK_AUDIO_EVENT } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import { chatSendErrorCopy, mergeChat, reconcileOptimisticChat, type OptimisticChat } from "@/lib/shared/optimistic-chat";
+import { orderPeopleGrid } from "@/lib/shared/people-grid";
 import type { RoomState, SessionView } from "@/lib/shared/types";
 import { CastForm } from "./CastForm";
 import { GateBackdrop } from "./GateBackdrop";
@@ -31,8 +32,10 @@ function demoState(name: string): RoomState {
   const crew = [
     { id: "me", displayName: name, hue: 332, isDj: false, isResident: false, muted: false },
     { id: "res-1", displayName: "House Cat", hue: 188, isDj: true, isResident: true, muted: false },
-    { id: "dj-1", displayName: "Velvet", hue: 38, isDj: false, isResident: false, muted: false },
-    { id: "p-3", displayName: "Neon Fox", hue: 312, isDj: false, isResident: false, muted: false },
+    { id: "res-2", displayName: "Neon Mira", hue: 312, isDj: false, isResident: true, muted: false },
+    { id: "res-3", displayName: "Basement Kev", hue: 38, isDj: false, isResident: true, muted: false },
+    { id: "dj-1", displayName: "Velvet", hue: 20, isDj: false, isResident: false, muted: false },
+    { id: "p-3", displayName: "Neon Fox", hue: 300, isDj: false, isResident: false, muted: false },
     { id: "p-4", displayName: "Basement", hue: 262, isDj: false, isResident: false, muted: true },
     { id: "p-5", displayName: "Acid Mira", hue: 148, isDj: false, isResident: false, muted: false },
     { id: "p-6", displayName: "Chrome", hue: 200, isDj: false, isResident: false, muted: false },
@@ -219,6 +222,10 @@ export function RoomClient({
     : 0;
   const inQueue = Boolean(liveSession && state.queue.some((q) => q.participantId === liveSession.participantId));
   const gateUp = guest;
+  const people = useMemo(
+    () => orderPeopleGrid(state.participants, state.queue, state.currentTurn?.endsAt),
+    [state.participants, state.queue, state.currentTurn?.endsAt],
+  );
   const chatLines = useMemo(() => mergeChat(state.chat, optimisticChat).slice(-40), [state.chat, optimisticChat]);
 
   useEffect(() => {
@@ -330,53 +337,41 @@ export function RoomClient({
         </div>
       </header>
       <div className="room-body">
-        <section className="panel">
-          <h2>Booth queue</h2>
-          <div className="panel-scroll">
-            {state.queue.length === 0 ? <p className="lede">Empty. House is spinning.</p> : null}
-            {state.queue.map((q) => {
-              const left = boothLeft(q.endsAt);
-              return (
-                <div className={`queue-item${q.isResident ? " is-resident" : ""}`} key={q.id}>
-                  <span>{String(q.position).padStart(2, "0")}</span>
-                  <div className="queue-copy">
-                    <strong>{q.displayName}</strong>
-                    <div className="queue-meta">
-                      {q.isResident ? "Resident" : null}
-                      {q.isResident ? " · " : null}
-                      {q.status}
-                    </div>
-                  </div>
-                  {left ? <span className="queue-timer">{left}</span> : null}
-                </div>
-              );
-            })}
+        <section className="panel people-panel">
+          <div className="panel-heading">
+            <h2>People</h2>
+            {inQueue ? (
+              <button className="secondary people-action" type="button" onClick={() => emit("queue:leave")}>
+                Step off
+              </button>
+            ) : (
+              <button
+                className="people-action"
+                type="button"
+                onClick={() => emit("queue:join")}
+                disabled={myStatus !== "ready"}
+              >
+                Get on the decks
+              </button>
+            )}
           </div>
-          {inQueue ? (
-            <button className="secondary" type="button" onClick={() => emit("queue:leave")}>
-              Step off
-            </button>
-          ) : (
-            <button type="button" onClick={() => emit("queue:join")} disabled={myStatus !== "ready"}>
-              Get on the decks
-            </button>
-          )}
-        </section>
-        <section className="panel">
-          <h2>In the room</h2>
           <div className="panel-scroll">
             <div className="people-grid">
-              {state.participants.map((p) => {
+              {people.map((p) => {
                 const creating = p.status === "processing";
+                const onDecks = p.booth?.role === "decks";
+                const upNext = p.booth?.role === "up-next";
+                const decksLeft = onDecks ? boothLeft(p.booth?.endsAt) : null;
                 const cues = [
                   creating ? "creating" : null,
+                  onDecks ? "on decks" : null,
+                  upNext ? "up next" : null,
                   p.isResident ? "Resident" : null,
-                  p.isDj ? "booth" : null,
                   p.muted ? "muted" : null,
                 ].filter(Boolean);
                 return (
                   <article
-                    className={`person-tile${p.isDj ? " is-dj" : ""}${p.muted ? " is-muted" : ""}${creating ? " is-creating" : ""}`}
+                    className={`person-tile${onDecks ? " is-dj" : ""}${p.muted ? " is-muted" : ""}${creating ? " is-creating" : ""}`}
                     key={p.id}
                     title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
                   >
@@ -392,14 +387,16 @@ export function RoomClient({
                     <strong className="person-name">{p.displayName}</strong>
                     {creating ? (
                       <span className="person-creating">Creating…</span>
+                    ) : onDecks ? (
+                      <span className="person-decks">
+                        decks{decksLeft ? ` · ${decksLeft}` : ""}
+                      </span>
+                    ) : upNext ? (
+                      <span className="person-upnext">up next</span>
                     ) : p.isResident ? (
                       <span className="person-resident">Resident</span>
-                    ) : p.isDj || p.muted ? (
-                      <span className="person-meta">
-                        {p.isDj ? "booth" : null}
-                        {p.isDj && p.muted ? " · " : null}
-                        {p.muted ? "muted" : null}
-                      </span>
+                    ) : p.muted ? (
+                      <span className="person-meta">muted</span>
                     ) : null}
                   </article>
                 );
