@@ -518,6 +518,45 @@ export async function listJobsForTurn(turnId: string): Promise<Job[]> {
   return readStore().jobs.filter((j) => j.turn_id === turnId);
 }
 
+const RECLAIM_KINDS: Job["kind"][] = ["character", "music", "video"];
+
+/** Worker-owned claim: queued jobs Vercel never put on Redis. */
+export async function listQueuedJobs(): Promise<Job[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "queued")
+      .in("kind", RECLAIM_KINDS)
+      .order("created_at", { ascending: true })
+      .limit(50);
+    return data ?? [];
+  }
+  return readStore()
+    .jobs.filter((j) => j.status === "queued" && RECLAIM_KINDS.includes(j.kind))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+export async function claimQueuedJob(id: string): Promise<Job | null> {
+  if (useRemote()) {
+    const { data, error } = await supabaseAdmin()
+      .from("generation_jobs")
+      .update({ status: "running" })
+      .eq("id", id)
+      .eq("status", "queued")
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  const store = readStore();
+  const idx = store.jobs.findIndex((j) => j.id === id && j.status === "queued");
+  if (idx < 0) return null;
+  store.jobs[idx] = { ...store.jobs[idx], status: "running" };
+  writeStore(store);
+  return store.jobs[idx];
+}
+
 export async function insertMedia(input: {
   kind: Media["kind"];
   storageKey: string;

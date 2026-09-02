@@ -45,7 +45,7 @@ npm run dev:all
 - Realtime: http://localhost:4000/health
 - Worker: http://localhost:4100/health
 
-Without Redis, mock character generation still completes inline on `/api/cast`, and the booth can mark a mock set ready inside the realtime process.
+Without Redis, mock character generation still completes inline on `/api/cast` (local only). On Vercel, `/api/cast` never waits on Redis — it inserts a `queued` row and the Railway worker claims it.
 
 ## Railway
 
@@ -87,8 +87,9 @@ WEBHOOK_BASE_URL=
 FAL_KEY=
 CHARACTER_MODEL_ENDPOINT=fal-ai/flux-pro/kontext
 MODERATOR_SECRET=
-REDIS_URL=                 # so /api/cast can enqueue character jobs
 ```
+
+Do **not** point Vercel at Railway private Redis (`*.railway.internal`). Cast inserts `generation_jobs` as `queued`; the worker claims those rows over the private network.
 
 Fal webhooks hit `POST /api/webhooks/fal`. Moderators call `POST /api/moderate` with `x-moderator-secret`.
 

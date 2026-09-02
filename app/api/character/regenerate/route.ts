@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { enqueueCharacter, hasRedis } from "@/lib/server/queues";
+import { hasRedis } from "@/lib/server/queues";
 import { getParticipant, insertJob, updateParticipant } from "@/lib/server/repo";
 import { currentSession } from "@/lib/server/session";
 import { isMockMode } from "@/lib/server/env";
@@ -15,14 +15,12 @@ export async function POST() {
   if (person.regenerate_used) return NextResponse.json({ error: "already used" }, { status: 409 });
 
   await updateParticipant(person.id, { regenerate_used: true, status: "processing" });
-  const job = await insertJob({
+  await insertJob({
     kind: "character",
     participantId: person.id,
     payload: { regenerate: true, characterPrompt: person.character_prompt },
   });
-  if (hasRedis()) {
-    await enqueueCharacter(job.id, person.id);
-  } else if (isMockMode()) {
+  if (!process.env.VERCEL && isMockMode() && !hasRedis()) {
     const svg = mockCharacterJpeg(person.display_name, `${person.character_prompt} (alt)`);
     const storageKey = await uploadBytes("media", `characters/${person.id}-alt.svg`, svg, "image/svg+xml");
     await insertMedia({ kind: "character", storageKey, contentType: "image/svg+xml", participantId: person.id });

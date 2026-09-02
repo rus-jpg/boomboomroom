@@ -116,6 +116,8 @@ export function RoomClient({
     return clockFromStart(start, now);
   }, [state.currentTurn, now]);
 
+  const myStatus =
+    state.participants.find((p) => p.id === session.participantId)?.status ?? session.status;
   const myCompose = state.compose?.participantId === session.participantId;
   const composeLeft = state.compose
     ? Math.max(0, Math.ceil((new Date(state.compose.deadlineAt).getTime() - now) / 1000))
@@ -162,7 +164,7 @@ export function RoomClient({
               Step off
             </button>
           ) : (
-            <button type="button" onClick={() => emit("queue:join")} disabled={session.status !== "ready"}>
+            <button type="button" onClick={() => emit("queue:join")} disabled={myStatus !== "ready"}>
               Get on the decks
             </button>
           )}
@@ -214,7 +216,7 @@ export function RoomClient({
         </section>
       </div>
 
-      {session.status === "processing" ? (
+      {myStatus === "processing" ? (
         <div className="processing">
           <div>
             <p className="eyebrow">Casting</p>

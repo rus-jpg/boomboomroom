@@ -13,7 +13,10 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
       result: payload as never,
       completed_at: new Date().toISOString(),
     });
-    if (job.turn_id) await enqueueFinalize(job.turn_id);
+    if (job.turn_id) {
+      if (process.env.VERCEL) await finalizeTurn(job.turn_id);
+      else await enqueueFinalize(job.turn_id);
+    }
     return;
   }
   await updateJob(job.id, { status: "complete", result: payload as never, completed_at: new Date().toISOString() });
@@ -34,7 +37,10 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
     return;
   }
 
-  if (job.turn_id) await enqueueFinalize(job.turn_id);
+  if (job.turn_id) {
+    if (process.env.VERCEL) await finalizeTurn(job.turn_id);
+    else await enqueueFinalize(job.turn_id);
+  }
 }
 
 export async function finalizeTurn(turnId: string) {

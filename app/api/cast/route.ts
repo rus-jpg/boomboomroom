@@ -3,7 +3,6 @@ import { z } from "zod";
 import { CHARACTER_MAX, CHARACTER_MIN, FACE_MAX_BYTES, MAX_PARTICIPANTS, NAME_MAX, NAME_MIN } from "@/lib/shared/constants";
 import { hashIp, randomToken, sha256 } from "@/lib/server/crypto";
 import { hasRedis } from "@/lib/server/queues";
-import { enqueueCharacter } from "@/lib/server/queues";
 import { createParticipant, getRoomBySlug, insertJob, insertMedia, insertModeration, occupancy, updateParticipant } from "@/lib/server/repo";
 import { writeSessionCookie } from "@/lib/server/session";
 import { uploadBytes } from "@/lib/server/storage";
@@ -66,15 +65,15 @@ export async function POST(req: Request) {
     metadata: { consent: true, at: new Date().toISOString() },
   });
 
-  const job = await insertJob({
+  await insertJob({
     kind: "character",
     participantId: participant.id,
     payload: { faceStorageKey: faceKey, characterPrompt: parsed.data.characterPrompt },
   });
 
-  if (hasRedis()) {
-    await enqueueCharacter(job.id, participant.id);
-  } else if (isMockMode()) {
+  // Do not await Redis. Vercel cannot reach Railway's private Redis and would
+  // hang the request. The worker claims `generation_jobs` with status=queued.
+  if (!process.env.VERCEL && isMockMode() && !hasRedis()) {
     const svg = mockCharacterJpeg(participant.display_name, participant.character_prompt);
     const storageKey = await uploadBytes("media", `characters/${participant.id}.svg`, svg, "image/svg+xml");
     await insertMedia({ kind: "character", storageKey, contentType: "image/svg+xml", participantId: participant.id });
