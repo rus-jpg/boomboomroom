@@ -91,4 +91,31 @@ describe("orderPeopleGrid", () => {
     expect(tiles[0]?.booth).toEqual({ role: "decks", endsAt: "2026-09-02T16:01:00.000Z" });
     expect(tiles.map((t) => t.id)).toEqual(["r1", "p-3"]);
   });
+
+  it("keeps every resident in the tray alongside present humans", () => {
+    const tiles = orderPeopleGrid(
+      [
+        fox,
+        person({ id: "r1", displayName: "Neon Mira", isResident: true }),
+        person({ id: "r2", displayName: "Vinyl Ghost", isResident: true }),
+        person({ id: "r3", displayName: "Basement Kev", isResident: true }),
+      ],
+      [
+        queueRow({
+          id: "hold",
+          participantId: "r1",
+          displayName: "Neon Mira",
+          status: "playing",
+          isResident: true,
+          endsAt: "2026-09-02T16:01:00.000Z",
+        }),
+      ],
+    );
+    expect(tiles.map((t) => t.displayName)).toEqual([
+      "Neon Mira",
+      "Neon Fox",
+      "Vinyl Ghost",
+      "Basement Kev",
+    ]);
+  });
 });

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { CLIP_COUNT, HOUSE_AUDIO_PATH, ROOM_SLUG } from "@/lib/shared/constants";
+import { CLIP_COUNT, HOUSE_AUDIO_PATH, PRESENCE_STALE_MS, ROOM_SLUG } from "@/lib/shared/constants";
+import { isHumanPresenceStale, latestHeartbeatMs } from "@/lib/shared/stage-cast";
 import type { Database, Json } from "@/lib/shared/database.types";
 import { hasSupabaseAdmin } from "./env";
 import { supabaseAdmin } from "./supabase";
@@ -123,11 +124,15 @@ export async function listReadyParticipants(): Promise<Participant[]> {
   return readStore().participants.filter((p) => p.status === "ready");
 }
 
-/** Ready people who currently have a socket in the room (humans on the floor). */
+/** Ready people with live (or grace-period) presence — not every ready participant ever. */
 export async function listPresentReadyParticipants(roomId: string): Promise<Participant[]> {
-  const [ready, presence] = await Promise.all([listReadyParticipants(), listPresence(roomId)]);
-  const present = new Set(presence.map((row) => row.participant_id).filter((id): id is string => Boolean(id)));
-  return ready.filter((person) => present.has(person.id));
+  const presence = await listPresence(roomId);
+  const ids = [
+    ...new Set(presence.map((row) => row.participant_id).filter((id): id is string => Boolean(id))),
+  ];
+  if (!ids.length) return [];
+  const people = await listParticipantsByIds(ids);
+  return people.filter((person) => person.status === "ready");
 }
 
 export async function listResidents(): Promise<Participant[]> {
@@ -258,16 +263,31 @@ export async function upsertPresence(input: {
     last_heartbeat_at: nowIso(),
   };
   if (useRemote()) {
+    await supabaseAdmin().from("room_presence").delete().eq("participant_id", input.participantId);
     await supabaseAdmin().from("room_presence").delete().eq("socket_id", input.socketId);
     const { data, error } = await supabaseAdmin().from("room_presence").insert(row).select("*").single();
     if (error || !data) throw error ?? new Error("presence insert failed");
     return data;
   }
   const store = readStore();
-  store.presence = store.presence.filter((p) => p.socket_id !== input.socketId);
+  store.presence = store.presence.filter(
+    (p) => p.socket_id !== input.socketId && p.participant_id !== input.participantId,
+  );
   store.presence.push(row);
   writeStore(store);
   return row;
+}
+
+export async function setPresenceHeartbeat(socketId: string, at: string) {
+  if (useRemote()) {
+    await supabaseAdmin().from("room_presence").update({ last_heartbeat_at: at }).eq("socket_id", socketId);
+    return;
+  }
+  const store = readStore();
+  store.presence = store.presence.map((p) =>
+    p.socket_id === socketId ? { ...p, last_heartbeat_at: at } : p,
+  );
+  writeStore(store);
 }
 
 export async function heartbeatPresence(socketId: string) {
@@ -309,11 +329,32 @@ export async function leaveRoomSession(participantId: string) {
   if (person.is_resident) throw new Error("residents stay in the house");
   const room = await getRoomBySlug();
   await leaveQueue(room.id, participantId);
+  const playing = (await listQueue(room.id)).filter(
+    (q) => q.participant_id === participantId && q.status === "playing",
+  );
+  for (const row of playing) {
+    await updateQueue(row.id, "skipped");
+  }
   await removePresenceByParticipant(participantId);
   await updateParticipant(participantId, {
     session_token_hash: `left:${participantId}`,
     last_seen_at: nowIso(),
   });
+}
+
+/** Drop humans whose latest heartbeat is older than PRESENCE_STALE_MS. Residents are never removed. */
+export async function sweepStaleHumanPresence(roomId: string, now = Date.now()): Promise<string[]> {
+  const rows = await listPresence(roomId);
+  const latest = latestHeartbeatMs(rows);
+  const removed: string[] = [];
+  for (const [participantId, at] of latest) {
+    if (!isHumanPresenceStale(at, now, PRESENCE_STALE_MS)) continue;
+    const person = await getParticipant(participantId);
+    if (!person || person.is_resident) continue;
+    await leaveRoomSession(person.id);
+    removed.push(person.id);
+  }
+  return removed;
 }
 
 export async function listPresence(roomId: string): Promise<Presence[]> {

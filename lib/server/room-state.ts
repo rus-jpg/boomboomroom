@@ -1,4 +1,4 @@
-import { CLIP_COUNT, COMPOSE_WINDOW_MS, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS, MIN_PARTY_SIZE } from "@/lib/shared/constants";
+import { CLIP_COUNT, COMPOSE_WINDOW_MS, HOUSE_AUDIO_PATH, MAX_PARTICIPANTS } from "@/lib/shared/constants";
 import { clockFromStart } from "@/lib/shared/clock";
 import { composeDeadlineMs } from "@/lib/shared/compose";
 import { isPlayableVideoUrl } from "@/lib/shared/media";
@@ -138,18 +138,18 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     if (p) uniquePresence.set(p.id, p);
   }
 
+  const residents = await listResidents();
   const participants: PublicParticipant[] = [];
+  const seenPeople = new Set<string>();
   for (const p of uniquePresence.values()) {
     if (p.is_resident) continue;
+    seenPeople.add(p.id);
     participants.push(await toPublic(p, p.id === djId));
   }
-
-  if (uniquePresence.size < MIN_PARTY_SIZE) {
-    const residents = await listResidents();
-    for (const r of residents) {
-      if (uniquePresence.has(r.id)) continue;
-      participants.push(await toPublic(r, r.id === djId));
-    }
+  for (const r of residents) {
+    if (seenPeople.has(r.id)) continue;
+    seenPeople.add(r.id);
+    participants.push(await toPublic(r, r.id === djId));
   }
 
   const humanQueue: QueueEntryView[] = [];
@@ -169,7 +169,6 @@ export async function buildRoomState(slug?: string): Promise<RoomState> {
     });
   }
 
-  const residents = await listResidents();
   const residentFaces = await Promise.all(
     residents.map(async (r) => ({
       id: r.id,

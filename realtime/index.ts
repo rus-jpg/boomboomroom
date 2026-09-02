@@ -10,8 +10,8 @@ import {
   getParticipantBySessionHash,
   getRoomBySlug,
   heartbeatPresence,
+  listPresence,
   occupancy,
-  removePresence,
   touchParticipant,
   upsertPresence,
 } from "@/lib/server/repo";
@@ -100,8 +100,9 @@ async function main() {
   io.on("connection", async (socket) => {
     const participantId = socket.data.participantId as string;
     const room = await getRoomBySlug();
-    const cap = await occupancy(room.id);
-    if (cap >= MAX_PARTICIPANTS) {
+    const [cap, already] = await Promise.all([occupancy(room.id), listPresence(room.id)]);
+    const alreadyHere = already.some((row) => row.participant_id === participantId);
+    if (cap >= MAX_PARTICIPANTS && !alreadyHere) {
       socket.emit("room:error", { message: "Room is at capacity (20)." });
       socket.disconnect(true);
       return;
@@ -175,7 +176,7 @@ async function main() {
 
     socket.on("disconnect", async () => {
       clearInterval(beat);
-      await removePresence(socket.id);
+      // Keep presence through PRESENCE_STALE_MS so a closed tab is not dropped instantly.
       await engine.emit();
     });
   });

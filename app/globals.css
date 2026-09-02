@@ -480,18 +480,16 @@ textarea { min-height: 120px; resize: vertical; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: min(54vh, 560px);
+  height: min(38vh, 360px);
   z-index: 5;
   pointer-events: none;
   background: linear-gradient(
     to top,
-    rgba(5, 5, 8, 0.58) 0%,
-    rgba(5, 5, 8, 0.32) 38%,
-    rgba(5, 5, 8, 0.1) 72%,
+    rgba(5, 5, 8, 0.88) 0%,
+    rgba(5, 5, 8, 0.55) 36%,
+    rgba(5, 5, 8, 0.18) 68%,
     transparent 100%
   );
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
-  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
 }
 .stage-warming {
   position: absolute;
@@ -568,44 +566,60 @@ textarea { min-height: 120px; resize: vertical; }
   bottom: 0;
   z-index: 6;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  gap: 8px;
-  padding: 8px 10px 12px;
-  height: min(34vh, 320px);
-  min-height: 220px;
-  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 4px 18px;
+  padding: 0 14px 10px;
+  height: auto;
+  min-height: 0;
+  max-height: min(32vh, 260px);
+  overflow: visible;
   background: transparent;
   pointer-events: none;
+  align-items: end;
 }
 .room-body > .panel {
   pointer-events: auto;
 }
 .panel {
-  background: rgba(10, 8, 14, 0.28);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  backdrop-filter: blur(18px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  overflow: visible;
+  backdrop-filter: none;
+  box-shadow: none;
 }
-.panel h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); flex: none; }
+.people-panel {
+  height: auto;
+  max-height: 100%;
+  overflow: visible;
+}
+.people-panel .panel-scroll {
+  overflow: visible;
+}
+.chat-panel {
+  height: min(26vh, 220px);
+  min-height: 132px;
+  max-height: 100%;
+  overflow: hidden;
+}
+.panel h2 { margin: 0 0 2px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); flex: none; text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75); }
 .panel-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   flex: none;
-  margin: 0 0 6px;
+  margin: 0 0 2px;
 }
 .panel-heading h2 {
   margin: 0;
 }
 .panel h2.panel-heading {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
 }
 .people-action {
   letter-spacing: 0.04em;
@@ -648,7 +662,7 @@ textarea { min-height: 120px; resize: vertical; }
   gap: 10px;
   align-items: center;
   padding: 5px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 0;
 }
 .queue-copy { min-width: 0; flex: 1; }
 .queue-meta {
@@ -669,8 +683,7 @@ textarea { min-height: 120px; resize: vertical; }
 .chat-line.is-system {
   align-items: baseline;
   gap: 8px;
-  padding: 4px 0;
-  border-bottom-color: rgba(246, 239, 230, 0.06);
+  padding: 3px 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
@@ -688,27 +701,39 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .people-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-  gap: 10px 8px;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px 8px;
   align-content: start;
+  padding: 8px 6px 0;
+  overflow: visible;
 }
 .person-tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  padding: 0;
+  padding: 6px 2px 0;
   border: 0;
   background: none;
   text-align: center;
+  overflow: visible;
 }
 .person-tile.is-muted {
   opacity: 0.78;
 }
+.person-face {
+  position: relative;
+  width: min(100%, 76px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  flex: none;
+}
 .person-portrait {
   position: relative;
-  width: min(100%, 72px);
+  width: calc(100% - 8px);
   aspect-ratio: 1;
   border-radius: 50%;
   overflow: hidden;
@@ -716,13 +741,15 @@ textarea { min-height: 120px; resize: vertical; }
     radial-gradient(circle at 50% 28%, rgba(255, 45, 106, 0.28), transparent 58%),
     linear-gradient(180deg, #2a1620, #120810);
 }
-.person-tile.is-dj .person-portrait {
+.person-tile.is-dj .person-face {
   outline: 2px solid var(--amber);
-  outline-offset: 2px;
+  outline-offset: -1px;
+  border-radius: 50%;
 }
-.person-tile.is-creating .person-portrait {
+.person-tile.is-creating .person-face {
   outline: 1px solid rgba(255, 176, 32, 0.5);
-  outline-offset: 2px;
+  outline-offset: -1px;
+  border-radius: 50%;
 }
 .person-spinner {
   position: absolute;
@@ -760,6 +787,7 @@ textarea { min-height: 120px; resize: vertical; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 .person-resident,
 .person-meta,
@@ -787,6 +815,9 @@ textarea { min-height: 120px; resize: vertical; }
   height: auto;
   overflow: auto;
 }
+.chat-line {
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.75);
+}
 .chat-line.is-pending {
   opacity: 0.72;
 }
@@ -801,13 +832,18 @@ textarea { min-height: 120px; resize: vertical; }
   flex: none;
 }
 .chat-form { display: flex; gap: 8px; margin-top: 6px; flex: none; }
-.chat-form input { flex: 1; padding: 8px 12px; }
+.chat-form input,
+.chat-form input[type="text"] {
+  flex: 1;
+  padding: 8px 16px;
+  border-radius: 999px;
+}
 .chat-form button, .panel button {
   background: var(--hot);
   color: white;
   border: 0;
-  border-radius: 10px;
-  padding: 7px 12px;
+  border-radius: 999px;
+  padding: 7px 14px;
   flex: none;
 }
 .panel button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
@@ -843,13 +879,19 @@ textarea { min-height: 120px; resize: vertical; }
   .cast-copy { padding: 28px 20px 12px; }
   .room-body {
     grid-template-columns: 1fr;
-    gap: 6px;
-    padding: 6px 6px 8px;
-    height: min(46dvh, 400px);
+    gap: 8px;
+    padding: 0 8px 8px;
+    height: auto;
+    max-height: min(46dvh, 360px);
     overflow: auto;
     pointer-events: auto;
+    align-items: stretch;
   }
-  .stage-bottom-fade { height: min(58dvh, 520px); }
+  .chat-panel {
+    height: min(22dvh, 200px);
+    min-height: 120px;
+  }
+  .stage-bottom-fade { height: min(42dvh, 380px); }
   .stage-wrap { max-height: none; }
   .people-grid { grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); }
   .cast-modal { padding: 12px; align-items: start; }

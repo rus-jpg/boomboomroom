@@ -339,7 +339,7 @@ export function RoomClient({
       <div className="room-body">
         <section className="panel people-panel">
           <div className="panel-heading">
-            <h2>People</h2>
+            <h2>Who's Here</h2>
             {inQueue ? (
               <button className="secondary people-action" type="button" onClick={() => emit("queue:leave")}>
                 Step off
@@ -364,7 +364,7 @@ export function RoomClient({
                 const decksLeft = onDecks ? boothLeft(p.booth?.endsAt) : null;
                 const cues = [
                   creating ? "creating" : null,
-                  onDecks ? "on decks" : null,
+                  onDecks ? "DJ" : null,
                   upNext ? "up next" : null,
                   p.isResident ? "Resident" : null,
                   p.muted ? "muted" : null,
@@ -375,21 +375,23 @@ export function RoomClient({
                     key={p.id}
                     title={cues.length ? `${p.displayName} · ${cues.join(" · ")}` : p.displayName}
                   >
-                    <div className="person-portrait">
-                      {p.characterUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img className="avatar" src={p.characterUrl} alt="" />
-                      ) : (
-                        <div className="avatar" aria-hidden />
-                      )}
-                      {creating ? <span className="person-spinner" aria-hidden /> : null}
+                    <div className="person-face">
+                      <div className="person-portrait">
+                        {p.characterUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img className="avatar" src={p.characterUrl} alt="" />
+                        ) : (
+                          <div className="avatar" aria-hidden />
+                        )}
+                        {creating ? <span className="person-spinner" aria-hidden /> : null}
+                      </div>
                     </div>
                     <strong className="person-name">{p.displayName}</strong>
                     {creating ? (
                       <span className="person-creating">Creating…</span>
                     ) : onDecks ? (
                       <span className="person-decks">
-                        decks{decksLeft ? ` · ${decksLeft}` : ""}
+                        DJ{decksLeft ? ` · ${decksLeft}` : ""}
                       </span>
                     ) : upNext ? (
                       <span className="person-upnext">up next</span>
@@ -404,7 +406,7 @@ export function RoomClient({
             </div>
           </div>
         </section>
-        <section className="panel">
+        <section className="panel chat-panel">
           <h2 className="panel-heading">
             Open chat
             <span className="chat-occupancy" title={`${state.occupancy} of ${state.maxOccupancy} in the room`}>
@@ -445,7 +447,7 @@ export function RoomClient({
               sendChat(body);
             }}
           >
-            <input value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
+            <input type="text" value={chat} onChange={(e) => setChat(e.target.value)} maxLength={240} placeholder="Say something" />
             <button type="submit">Send</button>
           </form>
           {chatError ? <p className="chat-error">{chatError}</p> : null}
