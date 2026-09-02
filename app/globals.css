@@ -151,9 +151,36 @@ textarea { min-height: 120px; resize: vertical; }
 }
 .stage-fallback {
   z-index: 0;
+  background: #07060c;
+}
+.stage-lights {
+  position: absolute;
+  inset: -20%;
   background:
-    radial-gradient(50% 40% at 50% 40%, #ff2d6a 0%, transparent 55%),
-    linear-gradient(120deg, #1a0a14, #071018);
+    radial-gradient(28% 32% at 22% 38%, rgba(80, 140, 220, 0.45) 0%, transparent 62%),
+    radial-gradient(34% 30% at 78% 32%, rgba(180, 70, 200, 0.38) 0%, transparent 60%),
+    radial-gradient(40% 36% at 50% 78%, rgba(200, 120, 40, 0.28) 0%, transparent 65%),
+    linear-gradient(160deg, #0a0812, #061018 55%, #120814);
+  animation: club-pan 14s ease-in-out infinite alternate;
+  filter: blur(8px);
+}
+.stage-portrait {
+  position: absolute;
+  inset: -8%;
+  width: 116%;
+  height: 116%;
+  object-fit: cover;
+  opacity: 0.72;
+  animation: ken-burns 18s ease-in-out infinite alternate;
+  z-index: 1;
+}
+@keyframes club-pan {
+  from { transform: translate3d(-4%, -3%, 0) scale(1.05); }
+  to { transform: translate3d(5%, 4%, 0) scale(1.12); }
+}
+@keyframes ken-burns {
+  from { transform: scale(1.05) translate3d(-2%, 0, 0); }
+  to { transform: scale(1.18) translate3d(3%, -2%, 0); }
 }
 .stage-wrap video { z-index: 1; }
 .stage-wrap .hud { z-index: 2; }

@@ -80,8 +80,12 @@ export async function submitVideo(input: {
 }
 
 export function extractAudioUrl(payload: unknown): string | null {
-  const p = payload as { audio?: { url?: string }; payload?: { audio?: { url?: string } } };
-  return p?.audio?.url || p?.payload?.audio?.url || null;
+  const p = payload as {
+    audio?: { url?: string };
+    payload?: { audio?: { url?: string } };
+    data?: { audio?: { url?: string } };
+  };
+  return p?.audio?.url || p?.payload?.audio?.url || p?.data?.audio?.url || null;
 }
 
 export function extractImageUrl(payload: unknown): string | null {

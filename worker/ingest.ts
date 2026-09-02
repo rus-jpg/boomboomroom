@@ -1,5 +1,5 @@
 import { extractAudioUrl, extractDurationS, extractImageUrl, extractVideoUrl } from "@/lib/server/fal";
-import { enqueueFinalize, publishRoomEvent } from "@/lib/server/queues";
+import { publishRoomEvent } from "@/lib/server/queues";
 import { getJob, insertMedia, updateJob, updateParticipant, updateTurn, listJobsForTurn, getTurn } from "@/lib/server/repo";
 import { downloadUrlToBuffer, uploadBytes } from "@/lib/server/storage";
 
@@ -14,10 +14,7 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
       result: payload as never,
       completed_at: new Date().toISOString(),
     });
-    if (job.turn_id) {
-      if (process.env.VERCEL) await finalizeTurn(job.turn_id);
-      else await enqueueFinalize(job.turn_id);
-    }
+    if (job.turn_id) await finalizeTurn(job.turn_id);
     return;
   }
   await updateJob(job.id, { status: "complete", result: payload as never, completed_at: new Date().toISOString() });
@@ -38,15 +35,15 @@ export async function ingestFalWebhook(jobId: string, payload: unknown, status: 
     return;
   }
 
-  if (job.turn_id) {
-    if (process.env.VERCEL) await finalizeTurn(job.turn_id);
-    else await enqueueFinalize(job.turn_id);
-  }
+  if (job.turn_id) await finalizeTurn(job.turn_id);
 }
 
 export async function finalizeTurn(turnId: string) {
   const turn = await getTurn(turnId);
   if (!turn) return;
+  if (turn.generation_status === "ready" || turn.generation_status === "playing" || turn.generation_status === "complete") {
+    return;
+  }
   const jobs = await listJobsForTurn(turnId);
   const music = jobs.find((j) => j.kind === "music");
   const videos = jobs

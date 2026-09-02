@@ -53,23 +53,40 @@ if (!existsSync(mp3)) {
   }
 }
 
-const colors = ["0x3a0a22", "0x4a2208", "0x0a2438", "0x2a0a40", "0x3a2808", "0x400818"];
+/** Moving gradient pairs — club lighting, not flat color fields. */
+const palettes = [
+  { c0: "0x1a0828", c1: "0x06141c", spot: "0x4a1838" },
+  { c0: "0x241408", c1: "0x0a1820", spot: "0x503010" },
+  { c0: "0x081828", c1: "0x041018", spot: "0x104050" },
+  { c0: "0x180828", c1: "0x100818", spot: "0x381850" },
+  { c0: "0x201008", c1: "0x08101a", spot: "0x482010" },
+  { c0: "0x14081c", c1: "0x081420", spot: "0x183848" },
+];
+
 for (let i = 0; i < 6; i++) {
   const dest = join(outDir, `house-0${i + 1}.mp4`);
+  const p = palettes[i];
+  console.log("writing", dest);
   try {
     execFileSync(
       "ffmpeg",
       [
         "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        `color=c=${colors[i]}:s=1280x720:d=10:r=24`,
-        "-vf",
-        `geq=r='r(X,Y)+40*sin(T+X/180)':g='g(X,Y)':b='b(X,Y)+30*sin(T+Y/140)',format=yuv420p`,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-f", "lavfi",
+        "-i", `gradients=s=1280x720:d=10:r=24:speed=0.11:type=linear:c0=${p.c0}:c1=${p.c1}:nb_colors=2`,
+        "-f", "lavfi",
+        "-i", `gradients=s=1280x720:d=10:r=24:speed=0.06:type=radial:c0=0x000000:c1=${p.spot}:nb_colors=2`,
+        "-filter_complex",
+        `[0][1]blend=all_mode=screen:all_opacity=0.62,hue=h=${12 + i * 4}*sin(2*PI*t/${7 + i}):s=1.18,vignette=angle=PI/4,noise=alls=6:allf=t,eq=contrast=1.14:brightness=-0.04:saturation=1.12,format=yuv420p`,
         "-an",
-        "-movflags",
-        "+faststart",
+        "-t", "10",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "26",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
         dest,
       ],
       { stdio: "inherit" },
@@ -82,7 +99,7 @@ for (let i = 0; i < 6; i++) {
 
 writeFileSync(
   join(outDir, "README.md"),
-  "# House buffers\n\nStub 60s audio + six 10s 1280×720 clips used while a DJ set generates.\nReplace with licensed house masters anytime; filenames stay the same.\n",
+  "# House buffers\n\n60s audio + six 10s 1280×720 procedural club clips used while a DJ set generates.\nRegenerate with `npm run house:assets`. Filenames stay the same if you swap in licensed masters.\n",
 );
 
 console.log("house assets ready in public/house");

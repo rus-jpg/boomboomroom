@@ -101,10 +101,10 @@ Schema + RLS are already applied (`rooms`, `participants`, `room_presence`, `cha
 
 There are **no public RLS policies**. The app uses the service role on the server. The anon key is only for client bootstrapping if you add Supabase Realtime later.
 
-## House stubs
+## House buffers
 
-`public/house/house-audio.mp3` — 60s generated four-on-the-floor bed  
-`public/house/house-01.mp4` … `house-06.mp4` — 10s 1280×720 color washes  
+`public/house/house-audio.mp3` — 60s four-on-the-floor bed  
+`public/house/house-01.mp4` … `house-06.mp4` — 10s 1280×720 procedural club lighting (`npm run house:assets`)
 
 Replace the files in place when you have real house masters.
 
