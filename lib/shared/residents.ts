@@ -47,3 +47,10 @@ export function residentSessionHash(slug: string): string {
 export function isResidentSessionHash(hash: string): boolean {
   return hash.startsWith(RESIDENT_SESSION_PREFIX);
 }
+
+/** True when a generation job was queued for a resident DJ (JSONB may stringify booleans). */
+export function isResidentJobPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const resident = (payload as { resident?: unknown }).resident;
+  return resident === true || resident === "true";
+}
