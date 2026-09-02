@@ -6,6 +6,7 @@ import { downloadUrlToBuffer, uploadBytes } from "@/lib/server/storage";
 export async function ingestFalWebhook(jobId: string, payload: unknown, status: string) {
   const job = await getJob(jobId);
   if (!job) return;
+  if (job.status === "complete" || job.status === "failed") return;
   if (status !== "OK") {
     await updateJob(job.id, {
       status: "failed",

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import Redis from "ioredis";
 import { QUEUES } from "@/lib/shared/constants";
 import { isMockMode, redisUrl } from "@/lib/server/env";
-import { submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
+import { pollFalQueue, submitCharacter, submitMusic, submitVideo } from "@/lib/server/fal";
 import { enqueueFinalize, publishRoomEvent } from "@/lib/server/queues";
 import {
   claimQueuedJob,
@@ -11,6 +11,7 @@ import {
   getParticipant,
   insertMedia,
   listQueuedJobs,
+  listRunningFalJobs,
   updateJob,
   updateParticipant,
 } from "@/lib/server/repo";
@@ -141,6 +142,26 @@ async function reclaimQueuedJobs() {
   }
 }
 
+async function pollRunningFalJobs() {
+  const jobs = await listRunningFalJobs();
+  if (!jobs.length) return;
+  for (const job of jobs) {
+    try {
+      const done = await pollFalQueue(job);
+      if (!done) continue;
+      console.log(`[worker] fal ${job.id} ${done.status}`);
+      await ingestFalWebhook(job.id, done.payload, done.status);
+    } catch (err) {
+      console.error(`[worker] fal poll ${job.id}`, err);
+    }
+  }
+}
+
+async function tick() {
+  await reclaimQueuedJobs();
+  await pollRunningFalJobs();
+}
+
 async function main() {
   const health = createServer((req, res) => {
     if (req.url === "/health") {
@@ -180,9 +201,9 @@ async function main() {
     console.log("[worker] REDIS_URL missing — DB claim loop only (no BullMQ)");
   }
 
-  await reclaimQueuedJobs();
+  await tick();
   setInterval(() => {
-    void reclaimQueuedJobs();
+    void tick();
   }, RECLAIM_MS);
 }
 

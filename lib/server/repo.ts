@@ -537,6 +537,23 @@ export async function listQueuedJobs(): Promise<Job[]> {
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
+export async function listRunningFalJobs(): Promise<Job[]> {
+  if (useRemote()) {
+    const { data } = await supabaseAdmin()
+      .from("generation_jobs")
+      .select("*")
+      .eq("status", "running")
+      .in("kind", RECLAIM_KINDS)
+      .not("fal_request_id", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(50);
+    return data ?? [];
+  }
+  return readStore()
+    .jobs.filter((j) => j.status === "running" && Boolean(j.fal_request_id) && RECLAIM_KINDS.includes(j.kind))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
 export async function claimQueuedJob(id: string): Promise<Job | null> {
   if (useRemote()) {
     const { data, error } = await supabaseAdmin()
