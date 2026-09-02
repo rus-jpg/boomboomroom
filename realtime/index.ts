@@ -57,13 +57,17 @@ async function main() {
     io.adapter(createAdapter(pub, sub));
     sub.subscribe("bbr:room:events");
     sub.on("message", (_ch, message) => {
-      void engine.emit();
-      try {
-        const parsed = JSON.parse(message);
-        if (parsed?.type === "webhook") io.to("room:main").emit("room:poke", parsed);
-      } catch {
-        /* ignore */
-      }
+      void (async () => {
+        try {
+          const parsed = JSON.parse(message) as { type?: string };
+          // Finalize-to-ready publishes turn-ready so house can yield on this tick, not ends_at.
+          if (parsed?.type === "turn-ready") await engine.advancePlayback();
+          if (parsed?.type === "webhook") io.to("room:main").emit("room:poke", parsed);
+        } catch {
+          /* ignore */
+        }
+        await engine.emit();
+      })();
     });
   }
 

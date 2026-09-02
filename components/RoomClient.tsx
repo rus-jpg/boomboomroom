@@ -169,7 +169,7 @@ export function RoomClient({
   return (
     <>
       <div className="room-shell" inert={guest || undefined}>
-      <header style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", alignItems: "center" }}>
+      <header className="room-header">
         <strong className="display">{PRODUCT_NAME}</strong>
         <span className="pill">
           {state.occupancy}/{state.maxOccupancy}
@@ -205,9 +205,6 @@ export function RoomClient({
         </section>
         <section className="panel">
           <h2>In the room</h2>
-          <p className="people-lede">
-            Six clips a turn. Appearances rotate through whoever is ready. Audio is the master clock.
-          </p>
           <div className="panel-scroll">
             <div className="people-grid">
               {state.participants.map((p) => {
@@ -229,15 +226,16 @@ export function RoomClient({
                       ) : (
                         <div className="avatar" aria-hidden />
                       )}
-                      {p.isDj || p.muted ? (
-                        <div className="person-overlays">
-                          {p.isDj ? <span className="person-chip booth">booth</span> : null}
-                          {p.muted ? <span className="person-chip muted">muted</span> : null}
-                        </div>
-                      ) : null}
                     </div>
                     <strong className="person-name">{p.displayName}</strong>
-                    {p.isResident ? <span className="badge-resident">Resident</span> : null}
+                    {p.isResident ? <span className="person-resident">Resident</span> : null}
+                    {p.isDj || p.muted ? (
+                      <span className="person-meta">
+                        {p.isDj ? "booth" : null}
+                        {p.isDj && p.muted ? " · " : null}
+                        {p.muted ? "muted" : null}
+                      </span>
+                    ) : null}
                   </article>
                 );
               })}

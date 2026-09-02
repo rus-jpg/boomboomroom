@@ -6,6 +6,7 @@ import {
 import { ensureHouseJobsQueued, houseSetLabel, takeHouseAudioKey, takeHouseClipKeys } from "@/lib/server/house";
 import { clockFromStart, turnBounds } from "@/lib/shared/clock";
 import { composeDeadlineMs, isComposeWindowExpired } from "@/lib/shared/compose";
+import { shouldAdvancePlayback } from "@/lib/shared/playback";
 import { isBanned, isBlockedText, isMuted, normalizeChat, takeToken, type RateBucket } from "@/lib/shared/moderation";
 import type { RoomState } from "@/lib/shared/types";
 import { CHAT_MAX_LEN, CHAT_RATE_PER_MIN } from "@/lib/shared/constants";
@@ -39,6 +40,7 @@ export class RoomEngine {
   private timer: NodeJS.Timeout | null = null;
   private listeners = new Set<EngineListener>();
   private lastEmit = 0;
+  private playbackLock: Promise<void> = Promise.resolve();
 
   on(fn: EngineListener) {
     this.listeners.add(fn);
@@ -47,7 +49,7 @@ export class RoomEngine {
 
   async start() {
     await this.expireComposeWindows();
-    await this.ensureHousePlaying();
+    await this.advancePlayback();
     this.timer = setInterval(() => {
       void this.tick();
     }, 1000);
@@ -77,16 +79,6 @@ export class RoomEngine {
     } catch (err) {
       console.error("[engine] tick failed", err);
     }
-  }
-
-  private async ensureHousePlaying() {
-    const room = await getRoomBySlug();
-    const playing = await latestPlayingTurn(room.id);
-    if (playing && playing.generation_status === "playing") {
-      const ends = playing.ends_at ? new Date(playing.ends_at).getTime() : 0;
-      if (ends > Date.now()) return;
-    }
-    await this.startHouse(room.id);
   }
 
   private async startHouse(roomId: string) {
@@ -128,25 +120,53 @@ export class RoomEngine {
     });
   }
 
-  private async advancePlayback() {
+  /** Postgres-authoritative: complete the current turn when it expires, or cut house for a ready DJ. */
+  async advancePlayback() {
+    const run = this.playbackLock.then(
+      () => this.advancePlaybackUnlocked(),
+      () => this.advancePlaybackUnlocked(),
+    );
+    this.playbackLock = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async advancePlaybackUnlocked() {
     const room = await getRoomBySlug();
     const playing = await latestPlayingTurn(room.id);
     if (!playing) {
       await this.startHouse(room.id);
       return;
     }
+    const ready = await nextReadyDjTurn(room.id);
+    const now = Date.now();
+    if (
+      !shouldAdvancePlayback({
+        playingKind: playing.kind,
+        endsAt: playing.ends_at,
+        hasReadyDj: Boolean(ready),
+        now,
+      })
+    ) {
+      return;
+    }
+
     const ends = playing.ends_at ? new Date(playing.ends_at).getTime() : 0;
-    if (ends > Date.now() + 50) return;
+    const interruptingHouse = playing.kind === "house" && Boolean(ready) && ends > now + 50;
 
     if (playing.kind === "dj" && playing.dj_participant_id) {
       const q = (await listQueue(room.id)).find((e) => e.participant_id === playing.dj_participant_id && e.status === "playing");
       if (q) await updateQueue(q.id, "done");
     }
-    await updateTurn(playing.id, { generation_status: "complete" });
+    await updateTurn(playing.id, {
+      generation_status: "complete",
+      ...(interruptingHouse ? { ends_at: new Date(now).toISOString() } : {}),
+    });
 
-    const ready = await nextReadyDjTurn(room.id);
     if (ready) {
-      const bounds = turnBounds(Date.now());
+      const bounds = turnBounds(now);
       await updateTurn(ready.id, {
         generation_status: "playing",
         starts_at: bounds.startsAt,
