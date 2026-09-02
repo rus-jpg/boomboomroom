@@ -81,13 +81,13 @@ export function houseClipPrompt(
 
   let face: string;
   if (role === "dj" && person) {
-    face = `Image 1 is ${person.display_name}, ${person.character_prompt}. Image 1 is ${person.display_name}, the resident DJ performing behind the DJ booth/mixer, DJing. Keep them recognizable.`;
+    face = `Image 1 is ${person.display_name}, ${person.character_prompt}. Image 1 is ${person.display_name}, the resident DJ performing behind the DJ booth/mixer, DJing. They are the only DJ. Keep them recognizable.`;
   } else if (role === "dancer" && person) {
-    face = `Image 1 is ${person.display_name}, ${person.character_prompt}. Image 1 is ${person.display_name}, dancing on the club floor, NOT in the DJ booth. Keep them recognizable.`;
+    face = `Image 1 is ${person.display_name}, ${person.character_prompt}. Image 1 is ${person.display_name}, dancing on the club floor with the crowd, NOT DJing, NOT in the DJ booth, not operating decks. Keep them recognizable.`;
   } else if (role === "dj") {
-    face = "Anonymous DJ booth, hands on the mixer, no recognizable face.";
+    face = "Anonymous DJ booth, hands on the mixer, no recognizable face. No other person is DJing.";
   } else {
-    face = "Anonymous packed dancefloor, bodies in motion, no specific face.";
+    face = "Anonymous packed dancefloor, bodies in motion, no specific face, NOT DJing, NOT behind the decks.";
   }
 
   const closing = isBooth

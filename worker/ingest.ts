@@ -1,5 +1,7 @@
+import { CLIP_COUNT } from "@/lib/shared/constants";
 import { extractAudioUrl, extractDurationS, extractImageUrl, extractVideoUrl } from "@/lib/server/fal";
 import { ensureHouseJobsQueued, hydratePlayingHouseTurn } from "@/lib/server/house";
+import { jobPayloadRole } from "@/lib/shared/house-clips";
 import { isStubHouseAudio, isStubHouseVideo } from "@/lib/shared/media";
 import { publishRoomEvent } from "@/lib/server/queues";
 import {
@@ -43,6 +45,7 @@ export async function storeHouseVideo(job: Job, payload: unknown): Promise<boole
     contentType: "video/mp4",
     durationMs: 10_000,
     participantId: job.participant_id,
+    role: jobPayloadRole(job.payload),
   });
   void promoteHouseVideo(row.id, job.id, remote).catch((err) =>
     console.warn(`[house] storage copy ${job.id}`, err),
@@ -197,11 +200,12 @@ export async function finalizeTurn(turnId: string) {
     }
   }
 
-  const videoUrls: string[] = [];
-  for (const [i, v] of videos.entries()) {
+  const videoUrls: string[] = Array.from({ length: CLIP_COUNT }, () => "");
+  for (const v of videos) {
+    const i = Number((v.payload as { clipIndex?: number } | null)?.clipIndex ?? 0);
     const remote = extractVideoUrl(v.result);
     if (!remote || isStubHouseVideo(remote)) continue;
-    videoUrls.push(remote);
+    if (i >= 0 && i < videoUrls.length) videoUrls[i] = remote;
   }
 
   await updateTurn(turnId, {

@@ -115,7 +115,10 @@ export class RoomEngine {
       endsAt: bounds.endsAt,
     });
     try {
-      const [keys, audio] = await Promise.all([takeHouseClipKeys(6, turn.id), takeHouseAudioKey(turn.id)]);
+      const [keys, audio] = await Promise.all([
+        takeHouseClipKeys(6, turn.id, holder?.id ?? null),
+        takeHouseAudioKey(turn.id),
+      ]);
       await updateTurn(turn.id, {
         video_segment_urls: keys,
         ...(audio ? { audio_url: audio } : {}),

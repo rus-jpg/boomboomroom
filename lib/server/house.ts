@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { CLIP_COUNT } from "@/lib/shared/constants";
+import {
+  clipAllowedForHolder,
+  countHolderReadyClips,
+  isBoothHouseJob,
+  selectHouseTurnClips,
+} from "@/lib/shared/house-clips";
 import { houseClipPrompt, houseMusicPrompt } from "@/lib/shared/house-prompt";
 import { isPlayableAudioUrl, isPlayableVideoUrl, isStubHouseAudio, isStubHouseVideo } from "@/lib/shared/media";
-import { assignHouseClip, asCastFace, stageCastPool, type CastFace } from "@/lib/shared/stage-cast";
+import { assignHouseClip, asCastFace, stageCastPool, type CastFace, type HouseClipRole } from "@/lib/shared/stage-cast";
 import { enqueueMusic, enqueueVideo, hasRedis, publishRoomEvent } from "./queues";
 import {
-  claimUnusedHouseAudio,
-  claimUnusedHouseClips,
+  claimHouseClipsByIds,
   countUnusedHouseAudio,
-  countUnusedHouseClips,
   getRoomBySlug,
   insertJob,
   latestHouseTurn,
@@ -16,10 +20,13 @@ import {
   listInflightHouseMusicJobs,
   listInflightHouseVideoJobs,
   listMediaByKind,
+  listMediaByStorageKeys,
   listPresentReadyParticipants,
   listResidents,
   getParticipant,
   listUnusedHouseClips,
+  claimUnusedHouseAudio,
+  releaseHouseClips,
   updateTurn,
 } from "./repo";
 import { pickNextResident } from "@/lib/shared/resident-booth";
@@ -29,6 +36,8 @@ const TARGET_POOL = 12;
 const MAX_INFLIGHT = 6;
 const MUSIC_AHEAD = 2;
 const MAX_MUSIC_INFLIGHT = 2;
+/** Want a full set of booth slots for the labeled holder before filling dancers. */
+const BOOTH_AHEAD = 3;
 
 function asStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
@@ -53,20 +62,48 @@ async function houseCastRoster(): Promise<{ residents: CastFace[]; pool: CastFac
   return { residents: residentFaces, pool };
 }
 
-/** Unused clips first (consumed), then replay any H3 Max house clip. Never stubs if any real clip exists. */
-export async function takeHouseClipKeys(count: number, turnId: string): Promise<string[]> {
-  const claimed = await claimUnusedHouseClips(count, turnId);
-  const keys = claimed.map((row) => row.storage_key).filter((key) => isPlayableVideoUrl(key));
+async function currentHouseBoothHolder(): Promise<CastFace | null> {
+  const { residents } = await houseCastRoster();
+  const room = await getRoomBySlug();
+  const [playing, lastHouse] = await Promise.all([latestPlayingTurn(room.id), latestHouseTurn(room.id)]);
+  const currentId = playing?.kind === "house" ? playing.dj_participant_id : lastHouse?.dj_participant_id ?? null;
+  return (
+    (currentId ? residents.find((person) => person.id === currentId) : null) ??
+    pickNextResident(residents, lastHouse?.dj_participant_id ?? null)
+  );
+}
+
+function playableHouseRows<T extends { storage_key: string }>(rows: T[]): T[] {
+  return rows.filter((row) => isPlayableVideoUrl(row.storage_key));
+}
+
+/**
+ * Unused clips first (consumed), then replay holder-safe clips.
+ * Never attaches another person's booth/DJ take to this holder.
+ */
+export async function takeHouseClipKeys(
+  count: number,
+  turnId: string,
+  holderId?: string | null,
+): Promise<string[]> {
+  if (count <= 0) return [];
+  const unused = playableHouseRows(await listUnusedHouseClips(48));
+  const picked = selectHouseTurnClips(unused, holderId ?? null, count);
+  const claimed = await claimHouseClipsByIds(picked.claimIds, turnId);
+  const claimedKeys = new Set(claimed.map((row) => row.storage_key).filter((key) => isPlayableVideoUrl(key)));
+  const keys = picked.keys.filter((key) => claimedKeys.has(key));
   if (keys.length >= count) return keys.slice(0, count);
 
-  const pool = await listMediaByKind("house_video", 48);
-  for (const row of pool) {
-    if (keys.length >= count) break;
-    if (!isPlayableVideoUrl(row.storage_key)) continue;
-    if (keys.includes(row.storage_key)) continue;
-    keys.push(row.storage_key);
+  const pool = playableHouseRows(await listMediaByKind("house_video", 48)).filter(
+    (row) => clipAllowedForHolder(row, holderId ?? null) && !claimedKeys.has(row.storage_key),
+  );
+  const replay = selectHouseTurnClips(pool, holderId ?? null, count);
+  const out = [...keys];
+  for (const key of replay.keys) {
+    if (out.length >= count) break;
+    if (isPlayableVideoUrl(key)) out.push(key);
   }
-  return keys;
+  return out.slice(0, count);
 }
 
 export async function takeHouseAudioKey(turnId: string): Promise<string | null> {
@@ -78,70 +115,108 @@ export async function takeHouseAudioKey(turnId: string): Promise<string | null> 
   return row?.storage_key ?? null;
 }
 
-export async function latestHouseClipKeys(count = CLIP_COUNT): Promise<string[]> {
-  const unusedRows = await listUnusedHouseClips(count);
-  const unusedKeys = unusedRows.map((row) => row.storage_key).filter((key) => isPlayableVideoUrl(key));
-  if (unusedKeys.length >= count) return unusedKeys.slice(0, count);
-  const rows = await listMediaByKind("house_video", 48);
-  const keys = [...unusedKeys];
-  for (const row of rows) {
-    if (keys.length >= count) break;
-    if (!isPlayableVideoUrl(row.storage_key) || keys.includes(row.storage_key)) continue;
-    keys.push(row.storage_key);
+export async function latestHouseClipKeys(count = CLIP_COUNT, holderId?: string | null): Promise<string[]> {
+  const unusedRows = playableHouseRows(await listUnusedHouseClips(48));
+  const picked = selectHouseTurnClips(unusedRows, holderId ?? null, count);
+  if (picked.keys.length >= count) return picked.keys.slice(0, count);
+  const rows = playableHouseRows(await listMediaByKind("house_video", 48));
+  const extra = selectHouseTurnClips(
+    rows.filter((row) => !picked.keys.includes(row.storage_key)),
+    holderId ?? null,
+    count - picked.keys.length,
+  );
+  return [...picked.keys, ...extra.keys].slice(0, count);
+}
+
+async function queueHouseClipJob(input: {
+  batchId: string;
+  clipIndex: number;
+  seq: number;
+  role: HouseClipRole;
+  featured: CastFace | null;
+}): Promise<void> {
+  const job = await insertJob({
+    kind: "video",
+    turnId: null,
+    participantId: input.featured?.id ?? null,
+    payload: {
+      house: true,
+      house_clip: true,
+      batchId: input.batchId,
+      clipIndex: input.clipIndex,
+      seq: input.seq,
+      role: input.role,
+      prompt: houseClipPrompt(input.seq, input.featured, input.role),
+      referenceImageUrl: input.featured?.character_reference_url ?? null,
+    },
+  });
+  console.log(
+    `[house] house_clip queued ${job.id} seq=${input.seq} role=${input.role} face=${input.featured?.display_name ?? (input.role === "dj" ? "anon-booth" : "crowd")}`,
+  );
+  if (hasRedis()) {
+    try {
+      await enqueueVideo(job.id, "house", input.clipIndex);
+    } catch {
+      // Worker DB claim loop picks queued house jobs.
+    }
   }
-  return keys;
 }
 
 async function ensureHouseVideoJobsQueued(): Promise<number> {
-  const unused = await countUnusedHouseClips();
+  const unusedRows = playableHouseRows(await listUnusedHouseClips(48));
   const inflight = await listInflightHouseVideoJobs();
-  let need = 0;
-  if (unused < AHEAD_UNUSED) need = Math.max(need, AHEAD_UNUSED - unused);
-  if (unused + inflight.length < TARGET_POOL) {
-    need = Math.max(need, TARGET_POOL - unused - inflight.length);
+  const { pool, residents } = await houseCastRoster();
+  const boothHolder = await currentHouseBoothHolder();
+  const holderId = boothHolder?.id ?? null;
+  const counts = countHolderReadyClips(unusedRows, holderId);
+  const inflightBooth = inflight.filter(
+    (job) => isBoothHouseJob(job) && (!holderId || job.participant_id === holderId),
+  ).length;
+  const inflightFloor = inflight.length - inflight.filter((job) => isBoothHouseJob(job)).length;
+
+  let boothNeed = Math.max(0, BOOTH_AHEAD - counts.booth - inflightBooth);
+  let floorNeed = Math.max(0, AHEAD_UNUSED - counts.floor - inflightFloor);
+  if (counts.allowed + inflight.length < TARGET_POOL) {
+    const extra = TARGET_POOL - counts.allowed - inflight.length;
+    if (counts.booth + inflightBooth < BOOTH_AHEAD) {
+      boothNeed = Math.max(boothNeed, Math.min(extra, BOOTH_AHEAD - counts.booth - inflightBooth));
+    }
+    floorNeed = Math.max(floorNeed, extra - boothNeed);
   }
-  need = Math.min(need, Math.max(0, MAX_INFLIGHT - inflight.length));
+
+  let need = Math.min(boothNeed + floorNeed, Math.max(0, MAX_INFLIGHT - inflight.length));
   if (need <= 0) return 0;
 
-  const { pool, residents } = await houseCastRoster();
-  const room = await getRoomBySlug();
-  const [playing, lastHouse] = await Promise.all([latestPlayingTurn(room.id), latestHouseTurn(room.id)]);
-  const currentId = playing?.kind === "house" ? playing.dj_participant_id : lastHouse?.dj_participant_id ?? null;
-  const boothHolder =
-    (currentId ? residents.find((person) => person.id === currentId) : null) ??
-    pickNextResident(residents, lastHouse?.dj_participant_id ?? null);
   const batchId = randomUUID();
   const seqBase = Date.now();
+  let queuedBooth = 0;
 
   for (let i = 0; i < need; i++) {
     const seq = seqBase + i;
-    const floor = pool.filter((person) => person.id !== boothHolder?.id);
-    const { role, person: featured } = assignHouseClip(seq, floor, residents, { boothHolder });
-    const job = await insertJob({
-      kind: "video",
-      turnId: null,
-      participantId: featured?.id ?? null,
-      payload: {
-        house: true,
-        house_clip: true,
+    const wantBooth = queuedBooth < boothNeed && Boolean(boothHolder);
+    if (wantBooth && boothHolder) {
+      await queueHouseClipJob({
         batchId,
         clipIndex: i,
         seq,
-        role,
-        prompt: houseClipPrompt(seq, featured, role),
-        referenceImageUrl: featured?.character_reference_url ?? null,
-      },
-    });
-    console.log(
-      `[house] house_clip queued ${job.id} seq=${seq} role=${role} face=${featured?.display_name ?? (role === "dj" ? "anon-booth" : "crowd")}`,
-    );
-    if (hasRedis()) {
-      try {
-        await enqueueVideo(job.id, "house", i);
-      } catch {
-        // Worker DB claim loop picks queued house jobs.
-      }
+        role: "dj",
+        featured: boothHolder,
+      });
+      queuedBooth += 1;
+      continue;
     }
+    const floor = pool.filter((person) => person.id !== boothHolder?.id);
+    const { role, person: featured } = assignHouseClip(seq, floor, residents, { boothHolder });
+    const safeRole: HouseClipRole = role === "dj" && featured && holderId && featured.id !== holderId ? "dancer" : role;
+    const safeFace = safeRole === "dj" ? (boothHolder ?? featured) : featured;
+    await queueHouseClipJob({
+      batchId,
+      clipIndex: i,
+      seq,
+      role: safeRole,
+      featured: safeFace,
+    });
+    if (safeRole === "dj") queuedBooth += 1;
   }
   return need;
 }
@@ -180,7 +255,7 @@ async function ensureHouseMusicJobsQueued(): Promise<number> {
   return need;
 }
 
-/** Keep ≥6 unused H3 Max clips and Music 3 beds ahead. Independent of DJ music. */
+/** Keep unused H3 Max clips and Music 3 beds ahead. Independent of DJ music. */
 export async function ensureHouseJobsQueued(): Promise<number> {
   const videos = await ensureHouseVideoJobsQueued();
   const beds = await ensureHouseMusicJobsQueued();
@@ -200,23 +275,40 @@ export async function houseSetLabel(residentName?: string | null): Promise<strin
   return `Resident set · ${residents[0].display_name}`;
 }
 
-/** Attach H3 Max clips + Music 3 beds to a playing house turn that is empty or still on stubs. */
+/** Attach holder-safe H3 Max clips + Music 3 beds to a playing house turn that is empty or still on stubs. */
 export async function hydratePlayingHouseTurn(): Promise<boolean> {
   const room = await getRoomBySlug();
   const playing = await latestPlayingTurn(room.id);
   if (!playing || playing.kind !== "house") return false;
+  const holderId = playing.dj_participant_id;
   const current = asStringArray(playing.video_segment_urls);
-  const playable = current.filter((url) => isPlayableVideoUrl(url) && !isStubHouseVideo(url));
+  const mediaRows = await listMediaByStorageKeys(current);
+  const byKey = new Map(mediaRows.map((row) => [row.storage_key, row]));
+  const kept: string[] = [];
+  for (const url of current) {
+    if (!isPlayableVideoUrl(url) || isStubHouseVideo(url)) continue;
+    const row = byKey.get(url);
+    if (row && !clipAllowedForHolder(row, holderId)) continue;
+    if (!kept.includes(url)) kept.push(url);
+  }
+
+  const unused = playableHouseRows(await listUnusedHouseClips(48)).filter((row) =>
+    clipAllowedForHolder(row, holderId),
+  );
+  const currentRows = mediaRows.filter((row) => kept.includes(row.storage_key));
+  const candidates = [...currentRows, ...unused];
+  const picked = selectHouseTurnClips(candidates, holderId, CLIP_COUNT);
+  if (picked.claimIds.length) {
+    await claimHouseClipsByIds(picked.claimIds, playing.id);
+  }
+  const nextKeys = picked.keys.length ? picked.keys : kept;
+
   const patch: { video_segment_urls?: string[]; audio_url?: string; music_prompt?: string } = {};
 
-  if (playable.length < CLIP_COUNT) {
-    const extra = await takeHouseClipKeys(CLIP_COUNT - playable.length, playing.id);
-    const keys = [...playable];
-    for (const key of extra) {
-      if (keys.length >= CLIP_COUNT) break;
-      if (!keys.includes(key)) keys.push(key);
-    }
-    if (keys.length && keys.length !== playable.length) patch.video_segment_urls = keys;
+  if (nextKeys.join("\0") !== current.join("\0")) {
+    patch.video_segment_urls = nextKeys.slice(0, CLIP_COUNT);
+    const dropped = mediaRows.filter((row) => current.includes(row.storage_key) && !nextKeys.includes(row.storage_key));
+    if (dropped.length) await releaseHouseClips(dropped.map((row) => row.id), playing.id);
   }
 
   if (isStubHouseAudio(playing.audio_url)) {

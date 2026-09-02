@@ -87,6 +87,7 @@ export type Database = {
           id: string;
           kind: Database["public"]["Enums"]["media_kind"];
           participant_id: string | null;
+          role: string | null;
           storage_key: string;
           turn_id: string | null;
           visibility: string;
@@ -98,6 +99,7 @@ export type Database = {
           id?: string;
           kind: Database["public"]["Enums"]["media_kind"];
           participant_id?: string | null;
+          role?: string | null;
           storage_key: string;
           turn_id?: string | null;
           visibility?: string;
